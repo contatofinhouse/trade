@@ -209,11 +209,23 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes }
       ? (activeQuotes.put_375.iv - activeQuotes.call_131.iv) * 100
       : smileSkew);
 
-  // Lógica de Sinais Operacionais de Ajuste (Home Broker Orders) com KAMA e Crossovers
+  // ────────────────────────────────────────────────
+  // Lógica de Sinais Operacionais — Ordens de Home Broker
+  // ────────────────────────────────────────────────
+  interface OrderLeg {
+    action: "COMPRA" | "VENDA";
+    ticker: string;
+    qty: number;
+    strike: number;
+    nature: string; // ex: "Desmontar Put" / "Rolar Call OTM"
+    color: "green" | "red" | "blue" | "amber";
+  }
+
   let signalTitle = "MANTER CARREGAMENTO";
   let signalColorClass = "border-emerald-200 bg-emerald-50/50 text-emerald-950 bg-emerald-600";
   let signalAction = "Manter Estrutura Atual";
-  let signalInstructions = "Nenhuma ação operacional é necessária no Home Broker. O Delta Líquido está confortável na banda neutra de 0.35 a 0.65 e o Skew estável.";
+  let orderLegs: OrderLeg[] = [];
+  let signalNote = "";
 
   // Verifica se há cruzamento pendente no preço live vs KAMA
   const isCrossoverAbove = currentRegime === "B" && livePrice > currentKAMA;
@@ -222,57 +234,90 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes }
   if (isCrossoverAbove) {
     signalTitle = "TRANSIÇÃO: ALTA (REGIME A)";
     signalColorClass = "border-indigo-200 bg-indigo-50/50 text-indigo-950 bg-indigo-600";
-    signalAction = "Desmontar Put e Rolar Call OTM";
-    
+    signalAction = "Desmontar Put + Rolar Call para OTM";
+    signalNote = `⚠️ Cruzamento UP — Preço R$ ${livePrice.toFixed(2)} ultrapassou KAMA R$ ${currentKAMA.toFixed(2)}`;
+
     const targetCallTicker = activeQuotes?.call_06?.ticker || "BBDCG200";
     const targetCallStrike = activeQuotes?.call_06?.strike || 20.00;
-    
-    signalInstructions = `⚠️ CRUZO UP (Preço R$ ${livePrice.toFixed(2)} > KAMA R$ ${currentKAMA.toFixed(2)})\n\n` +
-      `• VENDE PUT (Desmontar):\n` +
-      (state.active_put_ticker 
-        ? `  Vender Put ativa ${state.active_put_ticker} (Strike R$ ${state.active_put_strike?.toFixed(2)})\n`
-        : `  Nenhuma Put ativa para zerar\n`) +
-      `\n• ROLAGEM DE CALL (OTM):\n` +
-      (state.active_call_ticker 
-        ? `  - COMPRA: Recomprar Call ${state.active_call_ticker} (K: R$ ${state.active_call_strike.toFixed(2)})\n`
-        : "") +
-      `  - VENDE: Vender Call Delta ~0.06 ${targetCallTicker} (K: R$ ${targetCallStrike.toFixed(2)})`;
+
+    if (state.active_put_ticker && state.active_put_strike) {
+      orderLegs.push({
+        action: "VENDA",
+        ticker: state.active_put_ticker,
+        qty: qty,
+        strike: state.active_put_strike,
+        nature: "Desmontar Put (Zerar Proteção)",
+        color: "red"
+      });
+    }
+    if (state.active_call_ticker) {
+      orderLegs.push({
+        action: "COMPRA",
+        ticker: state.active_call_ticker,
+        qty: qty,
+        strike: state.active_call_strike,
+        nature: "Recomprar Call Atual (Encerrar)",
+        color: "green"
+      });
+    }
+    orderLegs.push({
+      action: "VENDA",
+      ticker: targetCallTicker,
+      qty: qty,
+      strike: targetCallStrike,
+      nature: "Vender Call OTM nova (Δ ≈ 0.06)",
+      color: "red"
+    });
+
   } else if (isCrossoverBelow) {
     signalTitle = "TRANSIÇÃO: PROTEÇÃO (REGIME B)";
     signalColorClass = "border-rose-200 bg-rose-50/50 text-rose-950 bg-rose-600";
-    signalAction = "Montar Put ATM e Call ATM (Cash)";
-    
+    signalAction = "Montar Put ATM + Rolar Call para ATM";
+    signalNote = `⚠️ Cruzamento DOWN — Preço R$ ${livePrice.toFixed(2)} caiu abaixo da KAMA R$ ${currentKAMA.toFixed(2)}`;
+
     const targetPutTicker = activeQuotes?.put_50?.ticker || "BBDCS175";
-    const targetPutStrike = activeQuotes?.put_50?.strike || 17.50;
+    const targetPutStrike = activeQuotes?.put_50?.strike || parseFloat(livePrice.toFixed(0)) + 0.00;
     const targetCallTicker = activeQuotes?.call_50?.ticker || "BBDCG175";
-    const targetCallStrike = activeQuotes?.call_50?.strike || 17.50;
-    
-    signalInstructions = `⚠️ CRUZO DOWN (Preço R$ ${livePrice.toFixed(2)} < KAMA R$ ${currentKAMA.toFixed(2)})\n\n` +
-      `• COMPRA PUT (Montar ATM):\n` +
-      `  Comprar Put Delta ~-0.50 ${targetPutTicker} (Strike R$ ${targetPutStrike.toFixed(2)})\n` +
-      `\n• ROLAGEM DE CALL (ATM):\n` +
-      (state.active_call_ticker 
-        ? `  - COMPRA: Recomprar Call ${state.active_call_ticker} (K: R$ ${state.active_call_strike.toFixed(2)})\n`
-        : "") +
-      `  - VENDE: Vender Call Delta ~0.50 ${targetCallTicker} (K: R$ ${targetCallStrike.toFixed(2)})`;
+    const targetCallStrike = activeQuotes?.call_50?.strike || parseFloat(livePrice.toFixed(0)) + 0.00;
+
+    orderLegs.push({
+      action: "COMPRA",
+      ticker: targetPutTicker,
+      qty: qty,
+      strike: targetPutStrike,
+      nature: "Comprar Put ATM nova (Δ ≈ -0.50)",
+      color: "green"
+    });
+    if (state.active_call_ticker) {
+      orderLegs.push({
+        action: "COMPRA",
+        ticker: state.active_call_ticker,
+        qty: qty,
+        strike: state.active_call_strike,
+        nature: "Recomprar Call Atual (Encerrar)",
+        color: "green"
+      });
+    }
+    orderLegs.push({
+      action: "VENDA",
+      ticker: targetCallTicker,
+      qty: qty,
+      strike: targetCallStrike,
+      nature: "Vender Call ATM nova (Δ ≈ 0.50)",
+      color: "red"
+    });
+
   } else {
-    // Em sincronia
     if (currentRegime === "A") {
-      signalTitle = "REGIME A (TENDÊNCIA ALTA)";
+      signalTitle = "REGIME A — ALTA ATIVA";
       signalColorClass = "border-emerald-200 bg-emerald-50/50 text-emerald-950 bg-emerald-600";
-      signalAction = "Carregar Exposição Direcional (Alfa)";
-      signalInstructions = `✔ KAMA em Regime de Alta (Preço > KAMA).\n\n` +
-        `• Put de Proteção: DESMONTADA (Exposição Direcional Máxima)\n` +
-        `• Call de Financiamento: OTM (${state.active_call_ticker || "Nenhuma"} Strike R$ ${state.active_call_strike.toFixed(2)})\n\n` +
-        `Nenhuma ação operacional pendente. Robô monitorando crossovers.`;
+      signalAction = "Nenhuma Ordem Necessária";
+      signalNote = `✔ Preço (R$ ${livePrice.toFixed(2)}) acima da KAMA (R$ ${currentKAMA.toFixed(2)}). Exposição direcional máxima.`;
     } else {
-      signalTitle = "REGIME B (HEDGE ATIVO)";
+      signalTitle = "REGIME B — HEDGE ATIVO";
       signalColorClass = "border-blue-200 bg-blue-50/50 text-blue-950 bg-blue-600";
-      signalAction = "Carregar Caixa Sintético (Capital Preservado)";
-      signalInstructions = `✔ KAMA em Regime de Baixa (Preço < KAMA).\n\n` +
-        `• Put de Proteção: ATIVA (${state.active_put_ticker || "Nenhuma"} Strike R$ ${state.active_put_strike?.toFixed(2)})\n` +
-        `• Call de Financiamento: ATM (${state.active_call_ticker || "Nenhuma"} Strike R$ ${state.active_call_strike.toFixed(2)})\n\n` +
-        `Nenhuma ação operacional pendente. Robô monitorando crossovers.`;
+      signalAction = "Nenhuma Ordem Necessária";
+      signalNote = `✔ Preço (R$ ${livePrice.toFixed(2)}) abaixo da KAMA (R$ ${currentKAMA.toFixed(2)}). Caixa sintético preservado.`;
     }
   }
 
@@ -772,33 +817,81 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes }
                 <span className="w-2.5 h-2.5 bg-white rounded-full animate-ping" />
               </div>
               
-              <div className="p-5 flex-1 flex flex-col justify-between">
+              <div className="p-5 flex-1 flex flex-col gap-4">
+                {/* Status + Ação */}
                 <div>
                   <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Status do Algoritmo</span>
-                  <span className="text-lg font-black tracking-tight text-slate-900 block mt-1">
+                  <span className="text-base font-black tracking-tight text-slate-900 block mt-0.5">
                     {signalTitle}
                   </span>
-                  
-                  <div className="mt-4">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Ação Recomendada</span>
-                    <span className="text-sm font-extrabold text-indigo-950 block mt-0.5">
-                      {signalAction}
-                    </span>
-                  </div>
-
-                  <div className="mt-4 p-3 rounded-lg bg-white border border-slate-200/60 shadow-inner">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider mb-1.5">Instruções no Home Broker</span>
-                    <div className="text-xs font-mono font-bold text-slate-800 whitespace-pre-line leading-relaxed">
-                      {signalInstructions}
-                    </div>
-                  </div>
+                  <span className="text-xs font-semibold text-indigo-700 mt-1 block">{signalAction}</span>
                 </div>
 
-                <div className="mt-6 pt-3 border-t border-slate-200/60 flex justify-between items-center text-[10px] text-slate-400">
-                  <span className="font-semibold text-slate-500">Exposição Líquida: {totalNetDelta >= 0 ? "+" : ""}{Math.round(totalNetDelta)} ações</span>
+                {/* Nota de contexto */}
+                {signalNote && (
+                  <div className="px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] font-semibold text-amber-800 leading-snug">
+                    {signalNote}
+                  </div>
+                )}
+
+                {/* Order Ticket */}
+                <div className="rounded-xl border border-slate-200 overflow-hidden bg-white shadow-inner">
+                  <div className="px-4 py-2 bg-slate-800 flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">📋 Ordens Home Broker — BBDC4 Collar</span>
+                    <span className="text-[10px] font-mono text-slate-400">Qtd base: {qty.toLocaleString("pt-BR")}</span>
+                  </div>
+
+                  {orderLegs.length === 0 ? (
+                    <div className="px-4 py-5 text-center">
+                      <span className="text-2xl block mb-1">✅</span>
+                      <span className="text-xs font-bold text-slate-500 block">Nenhuma ordem necessária</span>
+                      <span className="text-[10px] text-slate-400 mt-0.5 block">Robô monitorando crossovers KAMA</span>
+                    </div>
+                  ) : (
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="px-3 py-2 text-left text-[9px] uppercase tracking-wider text-slate-400 font-bold">Ação</th>
+                          <th className="px-3 py-2 text-left text-[9px] uppercase tracking-wider text-slate-400 font-bold">Ativo</th>
+                          <th className="px-3 py-2 text-right text-[9px] uppercase tracking-wider text-slate-400 font-bold">Qtd</th>
+                          <th className="px-3 py-2 text-right text-[9px] uppercase tracking-wider text-slate-400 font-bold">Strike</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {orderLegs.map((leg, i) => (
+                          <tr key={i} className={leg.color === "red" ? "bg-rose-50" : leg.color === "green" ? "bg-emerald-50" : "bg-white"}>
+                            <td className="px-3 py-2.5">
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black tracking-wider border ${
+                                leg.action === "VENDA"
+                                  ? "bg-rose-100 text-rose-700 border-rose-300"
+                                  : "bg-emerald-100 text-emerald-700 border-emerald-300"
+                              }`}>
+                                {leg.action === "VENDA" ? "▼" : "▲"} {leg.action}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <div className="font-black text-slate-900 tracking-tight">{leg.ticker}</div>
+                              <div className="text-[9px] text-slate-400 mt-0.5 leading-tight">{leg.nature}</div>
+                            </td>
+                            <td className="px-3 py-2.5 text-right">
+                              <span className="font-black font-mono text-slate-800">{leg.qty.toLocaleString("pt-BR")}</span>
+                            </td>
+                            <td className="px-3 py-2.5 text-right">
+                              <span className="font-mono font-bold text-slate-600">R$ {leg.strike.toFixed(2)}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* Rodapé */}
+                <div className="pt-2 border-t border-slate-200/60 flex justify-between items-center text-[10px] text-slate-400">
+                  <span className="font-semibold text-slate-500">Δ Líquido: {totalNetDelta >= 0 ? "+" : ""}{Math.round(totalNetDelta)} ações ({(hedgeRatio).toFixed(1)}% hedgeado)</span>
                   <span className="flex items-center gap-1 font-semibold text-emerald-600">
                     <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
-                    B3 Conectado
+                    B3 Live
                   </span>
                 </div>
               </div>
