@@ -1,5 +1,6 @@
 import { getHedgeState, getMetricsHistory } from "@/lib/db";
-import { fetchActiveOptionsQuotes } from "@/lib/options";
+import { fetchActiveOptionsQuotes, getClearAccessToken, fetchClearQuote } from "@/lib/options";
+import { getWinQuantIndicators } from "@/lib/quant_win";
 import Dashboard from "../components/Dashboard";
 
 // Forçar dynamic rendering no Next.js para carregar dados atualizados do banco no Vercel
@@ -10,6 +11,8 @@ export default async function Home() {
   let state: any = null;
   let history: any[] = [];
   let activeQuotes: any = null;
+  let winIndicators: any = null;
+  let winLivePrice: number | null = null;
 
   try {
     state = await getHedgeState();
@@ -33,6 +36,32 @@ export default async function Home() {
     activeQuotes = null; // Dashboard usa fallback interno
   }
 
+  try {
+    winIndicators = await getWinQuantIndicators();
+  } catch (e) {
+    console.error("[page] Falha ao buscar indicadores quantitativos do WIN:", e);
+    // Fallback básico para o WIN
+    winIndicators = {
+      close_price: 120000,
+      kama: 119500,
+      atr: 1500,
+      high: 120500,
+      low: 119000
+    };
+  }
+
+  // Busca preço real do WIN (usando IBOV como correspondente perfeito de pontos) via Clear API
+  if (process.env.CLEAR_API_KEY && process.env.CLEAR_CLIENT_SECRET) {
+    try {
+      const clearToken = await getClearAccessToken(process.env.CLEAR_API_KEY, process.env.CLEAR_CLIENT_SECRET);
+      if (clearToken) {
+        winLivePrice = await fetchClearQuote("IBOV", clearToken);
+      }
+    } catch (e) {
+      console.error("[page] Falha ao carregar cotação do WIN via Clear API:", e);
+    }
+  }
+
   // Fallback de estado caso o Supabase também falhe
   const safeState = state ?? {
     hedge_active: true,
@@ -54,6 +83,8 @@ export default async function Home() {
       initialState={safeState}
       initialHistory={history}
       activeQuotes={activeQuotes}
+      winIndicators={winIndicators}
+      winLivePrice={winLivePrice}
     />
   );
 }

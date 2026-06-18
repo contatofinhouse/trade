@@ -27,6 +27,7 @@ import {
   XCircle,
   Scale
 } from "lucide-react";
+import LongShortWin from "./LongShortWin";
 
 interface DashboardProps {
   initialState: {
@@ -59,10 +60,19 @@ interface DashboardProps {
     call_06?: { ticker: string; strike: number; price: number; iv: number; delta: number } | null;
     du: number | null;
   } | null;
+  winIndicators?: {
+    close_price: number;
+    kama: number;
+    atr: number;
+    high: number;
+    low: number;
+  };
+  winLivePrice?: number | null;
 }
 
-export default function Dashboard({ initialState, initialHistory, activeQuotes }: DashboardProps) {
+export default function Dashboard({ initialState, initialHistory, activeQuotes, winIndicators, winLivePrice }: DashboardProps) {
   const [isMounted, setIsMounted] = useState(false);
+  const [activeTab, setActiveTab] = useState<"bbdc4" | "win">("bbdc4");
   const [simulatedPrice, setSimulatedPrice] = useState(17.66); // Default current price
   
   const state = initialState || {
@@ -406,8 +416,68 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes }
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-800 font-sans antialiased selection:bg-indigo-100">
       
-      {/* Container Principal */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Tab Selector */}
+      <div className="bg-slate-900 border-b border-slate-800 text-white sticky top-0 z-50 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex space-x-8 h-14 items-center">
+            <button
+              onClick={() => setActiveTab("bbdc4")}
+              className={`text-sm font-bold h-full border-b-2 px-1 transition-all cursor-pointer ${
+                activeTab === "bbdc4"
+                  ? "border-indigo-500 text-white"
+                  : "border-transparent text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              🛡️ BBDC4 Collar
+            </button>
+            <button
+              onClick={() => setActiveTab("win")}
+              className={`text-sm font-bold h-full border-b-2 px-1 transition-all cursor-pointer ${
+                activeTab === "win"
+                  ? "border-indigo-500 text-white"
+                  : "border-transparent text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              ⚡ LONG/SHORT WIN
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {activeTab === "win" ? (
+        <div className="animate-in fade-in duration-300">
+          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-slate-200">
+              <div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-slate-100 text-slate-600 border border-slate-200">
+                    Quantitative Trend Following
+                  </span>
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    ⚡ Monitor Operacional Futuro (WIN)
+                  </span>
+                </div>
+                <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">
+                  Trend Following: <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">LONG/SHORT WIN</span>
+                </h1>
+              </div>
+              
+              <div className="flex flex-col md:text-right">
+                <span className="text-xs text-slate-400">Ativo de Referência</span>
+                <span className="text-sm font-semibold text-slate-700">Mini Índice Futuro</span>
+              </div>
+            </header>
+            
+            <LongShortWin
+              initialState={winIndicators || { close_price: 120000, kama: 119500, atr: 1500, high: 120500, low: 119000 }}
+              livePriceFromClear={winLivePrice}
+            />
+          </main>
+        </div>
+      ) : (
+        <>
+          {/* Container Principal */}
+          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         {/* Header */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-slate-200">
@@ -1082,10 +1152,12 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes }
         </section>
 
       </main>
+        </>
+      )}
       
       {/* Footer */}
       <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-center text-xs text-slate-400 border-t border-slate-200 mt-12">
-        <p>© 2026 Hedge Fund Quant Platform. Executado em modo Informativo / Read-Only para BBDC4.</p>
+        <p>© 2026 Hedge Fund Quant Platform. Executado em modo Informativo / Read-Only.</p>
       </footer>
     </div>
   );

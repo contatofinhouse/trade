@@ -597,7 +597,7 @@ export async function fetchActiveOptionsQuotes(
 }
 
 // Funções auxiliares para integração com a Clear API (XP Open API)
-async function getClearAccessToken(apiKey: string, apiSecret: string): Promise<string | null> {
+export async function getClearAccessToken(apiKey: string, apiSecret: string): Promise<string | null> {
   const authUrl = "https://api-parceiros.xpi.com.br/variableincome-openapi-auth/v1/auth";
   const subscriptionKey = "54870a6e21e14a38adbcdb27ebb5f195";
   const userAgent = "Smart-Trader-API Devs-Clear";
@@ -630,7 +630,7 @@ async function getClearAccessToken(apiKey: string, apiSecret: string): Promise<s
   }
 }
 
-async function fetchClearQuote(ticker: string, token: string): Promise<number | null> {
+export async function fetchClearQuote(ticker: string, token: string): Promise<number | null> {
   const baseUrl = "https://variableincome-openapi.xpi.com.br/api";
   const subscriptionKey = "54870a6e21e14a38adbcdb27ebb5f195";
   const userAgent = "Smart-Trader-API Devs-Clear";
