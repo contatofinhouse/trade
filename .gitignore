@@ -1,0 +1,29 @@
+# Dependency directories
+node_modules/
+.next/
+out/
+build/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment files
+.env
+.env*.local
+
+# System/Python files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+
+# Local databases/state
+hedge_state.json
