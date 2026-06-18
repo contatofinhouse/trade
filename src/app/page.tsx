@@ -1,6 +1,6 @@
 import { getHedgeState, getMetricsHistory } from "@/lib/db";
 import { fetchActiveOptionsQuotes } from "@/lib/options";
-import Dashboard from "@/components/Dashboard";
+import Dashboard from "../components/Dashboard";
 
 // Forçar dynamic rendering no Next.js para carregar dados atualizados do banco no Vercel
 export const dynamic = "force-dynamic";
