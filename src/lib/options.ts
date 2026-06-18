@@ -519,6 +519,64 @@ export async function fetchActiveOptionsQuotes(
     targetDu = 21; // fallback ~ 1 mes
   }
 
+  // Integração com a Clear API para cotações em tempo real (Sem Delay)
+  const clearApiKey = process.env.CLEAR_API_KEY;
+  const clearApiSecret = process.env.CLEAR_CLIENT_SECRET;
+
+  if (clearApiKey && clearApiSecret) {
+    try {
+      const clearToken = await getClearAccessToken(clearApiKey, clearApiSecret);
+      if (clearToken) {
+        const tickersToFetch = new Set<string>();
+        tickersToFetch.add("BBDC4");
+        if (putTicker) tickersToFetch.add(putTicker);
+        if (callTicker) tickersToFetch.add(callTicker);
+        if (put50Result?.ticker) tickersToFetch.add(put50Result.ticker);
+        if (call50Result?.ticker) tickersToFetch.add(call50Result.ticker);
+        if (call06Result?.ticker) tickersToFetch.add(call06Result.ticker);
+        if (put275Result?.ticker) tickersToFetch.add(put275Result.ticker);
+        if (call275Result?.ticker) tickersToFetch.add(call275Result.ticker);
+
+        const quotesMap = new Map<string, number>();
+        await Promise.all(
+          Array.from(tickersToFetch).map(async (ticker) => {
+            const price = await fetchClearQuote(ticker, clearToken);
+            if (price !== null) {
+              quotesMap.set(ticker, price);
+            }
+          })
+        );
+
+        if (quotesMap.has("BBDC4")) {
+          underlyingPrice = quotesMap.get("BBDC4")!;
+        }
+        if (putResult && quotesMap.has(putResult.ticker)) {
+          putResult.price = quotesMap.get(putResult.ticker)!;
+        }
+        if (callResult && quotesMap.has(callResult.ticker)) {
+          callResult.price = quotesMap.get(callResult.ticker)!;
+        }
+        if (put50Result && quotesMap.has(put50Result.ticker)) {
+          put50Result.price = quotesMap.get(put50Result.ticker)!;
+        }
+        if (call50Result && quotesMap.has(call50Result.ticker)) {
+          call50Result.price = quotesMap.get(call50Result.ticker)!;
+        }
+        if (call06Result && quotesMap.has(call06Result.ticker)) {
+          call06Result.price = quotesMap.get(call06Result.ticker)!;
+        }
+        if (put275Result && quotesMap.has(put275Result.ticker)) {
+          put275Result.price = quotesMap.get(put275Result.ticker)!;
+        }
+        if (call275Result && quotesMap.has(call275Result.ticker)) {
+          call275Result.price = quotesMap.get(call275Result.ticker)!;
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao integrar cotações em tempo real da Clear API:", err);
+    }
+  }
+
   const skew = (put375Result.iv - call131Result.iv) * 100;
 
   return {
@@ -536,4 +594,68 @@ export async function fetchActiveOptionsQuotes(
     call_06: call06Result,
     du: targetDu
   };
+}
+
+// Funções auxiliares para integração com a Clear API (XP Open API)
+async function getClearAccessToken(apiKey: string, apiSecret: string): Promise<string | null> {
+  const authUrl = "https://api-parceiros.xpi.com.br/variableincome-openapi-auth/v1/auth";
+  const subscriptionKey = "54870a6e21e14a38adbcdb27ebb5f195";
+  const userAgent = "Smart-Trader-API Devs-Clear";
+
+  try {
+    const response = await fetch(authUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Ocp-Apim-Subscription-Key": subscriptionKey,
+        "User-Agent": userAgent,
+      },
+      body: JSON.stringify({
+        API_KEY: apiKey,
+        API_SECRET: apiSecret,
+      }),
+      next: { revalidate: 3000 } // Cache do token por 50 minutos
+    });
+
+    if (!response.ok) {
+      console.error("Falha na autenticação da Clear API:", await response.text());
+      return null;
+    }
+
+    const data = await response.json();
+    return data.access_token || null;
+  } catch (error) {
+    console.error("Erro ao chamar endpoint de autenticação da Clear API:", error);
+    return null;
+  }
+}
+
+async function fetchClearQuote(ticker: string, token: string): Promise<number | null> {
+  const baseUrl = "https://variableincome-openapi.xpi.com.br/api";
+  const subscriptionKey = "54870a6e21e14a38adbcdb27ebb5f195";
+  const userAgent = "Smart-Trader-API Devs-Clear";
+  const url = `${baseUrl}/v1/marketdata/quote?ticker=${ticker}`;
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Ocp-Apim-Subscription-Key": subscriptionKey,
+        "Authorization": `Bearer ${token}`,
+        "User-Agent": userAgent,
+      },
+      next: { revalidate: 5 } // Cache de 5 segundos para cotações da Clear
+    });
+
+    if (!response.ok) {
+      console.warn(`Falha ao buscar cotação de ${ticker} na Clear API:`, await response.text());
+      return null;
+    }
+
+    const data = await response.json();
+    return data.lastPrice !== undefined && data.lastPrice !== null ? parseFloat(data.lastPrice) : null;
+  } catch (error) {
+    console.error(`Erro ao buscar cotação de ${ticker} na Clear API:`, error);
+    return null;
+  }
 }
