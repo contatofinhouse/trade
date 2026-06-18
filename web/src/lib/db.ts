@@ -36,7 +36,66 @@ async function kvRequest(command: string[]): Promise<any> {
   return data.result;
 }
 
+// Helper: executa requisição HTTP REST para o Supabase (PostgREST API)
+async function supabaseRequest(method: string, path: string, body?: any, preferHeader?: string): Promise<any> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
+
+  if (!url || !key) return null;
+
+  const baseUrl = url.endsWith("/") ? url.slice(0, -1) : url;
+  const requestUrl = `${baseUrl}/rest/v1/${path}`;
+
+  const headers: any = {
+    apikey: key,
+    Authorization: `Bearer ${key}`,
+    "Content-Type": "application/json"
+  };
+
+  if (preferHeader) {
+    headers["Prefer"] = preferHeader;
+  }
+
+  const options: any = {
+    method: method,
+    headers: headers,
+    cache: "no-store"
+  };
+
+  if (body) {
+    options.body = JSON.stringify(body);
+  }
+
+  const response = await fetch(requestUrl, options);
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Supabase REST request failed: ${response.status} ${response.statusText} - ${errText}`);
+  }
+
+  if (response.status === 204) {
+    return null;
+  }
+
+  return await response.json();
+}
+
 export async function getHedgeState(): Promise<any> {
+  // 1. Tentar Supabase se configurado
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
+
+  if (supabaseUrl && supabaseKey) {
+    try {
+      const data = await supabaseRequest("GET", "hedge_state?id=eq.1");
+      if (data && data.length > 0) {
+        return data[0].state;
+      }
+    } catch (e) {
+      console.error("Erro ao ler hedge_state do Supabase:", e);
+    }
+  }
+
+  // 2. Fallback para Vercel KV
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
 
@@ -51,7 +110,7 @@ export async function getHedgeState(): Promise<any> {
     }
   }
 
-  // Fallback para arquivo local
+  // 3. Fallback para arquivo local
   try {
     if (fs.existsSync(stateFilePath)) {
       return JSON.parse(fs.readFileSync(stateFilePath, "utf-8"));
@@ -60,7 +119,7 @@ export async function getHedgeState(): Promise<any> {
     console.error("Erro ao ler arquivo local hedge_state.json:", e);
   }
 
-  // Fallback padrão estrutural de emergência
+  // 4. Fallback padrão estrutural de emergência
   return {
     hedge_active: true,
     activation_date: "2026-06-18",
@@ -77,6 +136,20 @@ export async function getHedgeState(): Promise<any> {
 }
 
 export async function saveHedgeState(state: any): Promise<void> {
+  // 1. Tentar Supabase se configurado
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
+
+  if (supabaseUrl && supabaseKey) {
+    try {
+      await supabaseRequest("POST", "hedge_state", { id: 1, state }, "resolution=merge-duplicates");
+      return;
+    } catch (e) {
+      console.error("Erro ao salvar hedge_state no Supabase:", e);
+    }
+  }
+
+  // 2. Fallback para Vercel KV
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
 
@@ -89,7 +162,7 @@ export async function saveHedgeState(state: any): Promise<void> {
     }
   }
 
-  // Gravação local
+  // 3. Gravação local
   try {
     fs.writeFileSync(stateFilePath, JSON.stringify(state, null, 4), "utf-8");
   } catch (e) {
@@ -113,6 +186,35 @@ export interface MetricRow {
 }
 
 export async function getMetricsHistory(): Promise<MetricRow[]> {
+  // 1. Tentar Supabase se configurado
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
+
+  if (supabaseUrl && supabaseKey) {
+    try {
+      const data = await supabaseRequest("GET", "metrics_history?order=data.asc");
+      if (data) {
+        return data.map((row: any) => ({
+          data: row.data,
+          preco_fechamento: String(row.preco_fechamento),
+          hv_20d: String(row.hv_20d),
+          zscore_vol: String(row.zscore_vol),
+          tsmom_1m: String(row.tsmom_1m),
+          tsmom_3m: String(row.tsmom_3m),
+          tsmom_composite: String(row.tsmom_composite),
+          iv_puts: String(row.iv_puts),
+          vrp_puts: String(row.vrp_puts),
+          hedge_ativo: String(row.hedge_ativo),
+          kama: row.kama ? String(row.kama) : undefined,
+          regime: row.regime ? String(row.regime) : undefined
+        }));
+      }
+    } catch (e) {
+      console.error("Erro ao ler metrics_history do Supabase:", e);
+    }
+  }
+
+  // 2. Fallback para Vercel KV
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
 
@@ -127,7 +229,7 @@ export async function getMetricsHistory(): Promise<MetricRow[]> {
     }
   }
 
-  // Fallback para arquivo local CSV
+  // 3. Fallback para arquivo local CSV
   const fallbackHistory: MetricRow[] = [
     {
       data: "2026-06-18",
@@ -169,6 +271,34 @@ export async function getMetricsHistory(): Promise<MetricRow[]> {
 }
 
 export async function saveMetricsHistory(history: MetricRow[]): Promise<void> {
+  // 1. Tentar Supabase se configurado
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
+
+  if (supabaseUrl && supabaseKey) {
+    try {
+      const payload = history.map((row) => ({
+        data: row.data,
+        preco_fechamento: parseFloat(row.preco_fechamento) || 0,
+        hv_20d: parseFloat(row.hv_20d) || 0,
+        zscore_vol: parseFloat(row.zscore_vol) || 0,
+        tsmom_1m: parseFloat(row.tsmom_1m) || 0,
+        tsmom_3m: parseFloat(row.tsmom_3m) || 0,
+        tsmom_composite: parseFloat(row.tsmom_composite) || 0,
+        iv_puts: parseFloat(row.iv_puts) || 0,
+        vrp_puts: parseFloat(row.vrp_puts) || 0,
+        hedge_ativo: parseInt(row.hedge_ativo) || 0,
+        kama: parseFloat(row.kama || "0") || 0,
+        regime: row.regime || ""
+      }));
+      await supabaseRequest("POST", "metrics_history", payload, "resolution=merge-duplicates");
+      return;
+    } catch (e) {
+      console.error("Erro ao salvar metrics_history no Supabase:", e);
+    }
+  }
+
+  // 2. Fallback para Vercel KV
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
 
@@ -181,7 +311,7 @@ export async function saveMetricsHistory(history: MetricRow[]): Promise<void> {
     }
   }
 
-  // Gravação local no formato CSV
+  // 3. Gravação local no formato CSV
   try {
     const headers = [
       "data", "preco_fechamento", "hv_20d", "zscore_vol", 
