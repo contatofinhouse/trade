@@ -1,9 +1,0 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/update-hedge",
-      "schedule": "45 19 * * 1-5"
-    }
-  ]
-}
-
