@@ -66,6 +66,11 @@ interface DashboardProps {
     atr: number;
     high: number;
     low: number;
+    bollinger_upper: number;
+    bollinger_lower: number;
+    connors_rsi: number;
+    kalman_price: number;
+    kalman_trend: "UP" | "DOWN";
   };
   winLivePrice?: number | null;
 }
@@ -469,7 +474,18 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             </header>
             
             <LongShortWin
-              initialState={winIndicators || { close_price: 120000, kama: 119500, atr: 1500, high: 120500, low: 119000 }}
+              initialState={winIndicators || { 
+                close_price: 120000, 
+                kama: 119500, 
+                atr: 1500, 
+                high: 120500, 
+                low: 119000,
+                bollinger_upper: 122500,
+                bollinger_lower: 116500,
+                connors_rsi: 50,
+                kalman_price: 120000,
+                kalman_trend: "UP"
+              }}
               livePriceFromClear={winLivePrice}
             />
           </main>

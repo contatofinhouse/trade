@@ -23,7 +23,10 @@ import {
   ArrowRightLeft,
   CheckCircle2,
   XCircle,
-  HelpCircle
+  HelpCircle,
+  Zap,
+  Sliders,
+  Scale
 } from "lucide-react";
 
 interface LongShortWinProps {
@@ -33,15 +36,22 @@ interface LongShortWinProps {
     atr: number;
     high: number;
     low: number;
+    bollinger_upper: number;
+    bollinger_lower: number;
+    connors_rsi: number;
+    kalman_price: number;
+    kalman_trend: "UP" | "DOWN";
   };
   livePriceFromClear?: number | null;
 }
 
 export default function LongShortWin({ initialState, livePriceFromClear }: LongShortWinProps) {
   const [isMounted, setIsMounted] = useState(false);
-  const [capitalBase, setCapitalBase] = useState(10000); // R$ 10.000 padrão
-  const [riskPercent, setRiskPercent] = useState(1.0); // 1% de risco padrão
-  const [atrMultiplier, setAtrMultiplier] = useState(2.0); // 2x ATR para Stop
+  
+  // Parâmetros Fixo de Risco de Hedge Fund
+  const [capitalBase, setCapitalBase] = useState(100000); // Capital padrão de R$ 100.000
+  const [maxRiskCash, setMaxRiskCash] = useState(1000); // Risco máximo de R$ 1.000 por trade
+  const [atrMultiplier, setAtrMultiplier] = useState(2.0); // Multiplicador padrão de 2.0x ATR para stops
   
   // Preço do WIN atual
   const basePrice = livePriceFromClear || initialState.close_price || 120000;
@@ -59,47 +69,85 @@ export default function LongShortWin({ initialState, livePriceFromClear }: LongS
 
   const currentPrice = roundToWIN(simulatedPrice);
   const kama = roundToWIN(initialState.kama || basePrice);
-  const atr = roundToWIN(initialState.atr || 1500); // Ex: 1500 pontos ATR
+  const atr = roundToWIN(initialState.atr || 1500);
+  
+  // Bandas Bollinger-KAMA e Filtros
+  const bollingerUpper = roundToWIN(initialState.bollinger_upper || kama + 3000);
+  const bollingerLower = roundToWIN(initialState.bollinger_lower || kama - 3000);
+  const connorsRsi = Math.round(initialState.connors_rsi || 50);
+  const kalmanPrice = roundToWIN(initialState.kalman_price || basePrice);
+  const kalmanTrend = initialState.kalman_trend || "UP";
 
-  const distToKama = ((currentPrice - kama) / kama) * 100;
+  // ----------------------------------------------------
+  // Algoritmo de Scoring Quantitativo (Hedge Fund Style)
+  // ----------------------------------------------------
+  
+  // 1. Sinal KAMA
+  const scoreKama = currentPrice > kama ? 1 : -1;
+  // 2. Filtro RSI
+  const scoreRsi = connorsRsi > 50 ? 1 : -1;
+  // 3. Filtro Kalman
+  const scoreKalman = kalmanTrend === "UP" ? 1 : -1;
 
-  // Lógica do Crossover KAMA (Sem considerar robô de execução)
-  const isBuy = currentPrice > kama;
-  const signalText = isBuy ? "COMPRA (LONG)" : "VENDA (SHORT)";
-  const signalColorClass = isBuy 
-    ? "border-emerald-200 bg-emerald-50/50 text-emerald-950 bg-emerald-600"
-    : "border-rose-200 bg-rose-50/50 text-rose-950 bg-rose-600";
+  // Pontuação Total (Scoring de -3 a +3)
+  const totalScore = scoreKama + scoreRsi + scoreKalman;
 
-  // Alvo e Stop baseados no ATR
-  // Compra: Stop = KAMA - (ATR * multiplier), Alvo = Entrada + (ATR * multiplier * 1.5)
-  // Venda: Stop = KAMA + (ATR * multiplier), Alvo = Entrada - (ATR * multiplier * 1.5)
+  // Filtros de Exaustão (Bollinger-KAMA)
+  const isOverbought = currentPrice >= bollingerUpper; // Esticado na alta
+  const isOversold = currentPrice <= bollingerLower; // Esticado na baixa
+
+  // Tomada de Decisão Final baseada em Scoring + Exaustão
+  let decision: "COMPRA" | "VENDA" | "CAIXA" = "CAIXA";
+  let blockReason = "";
+
+  if (totalScore >= 2) {
+    if (isOverbought) {
+      decision = "CAIXA";
+      blockReason = "⚠️ Compra bloqueada: Preço acima da Banda Superior (Exaustão/Sobrecomprado).";
+    } else {
+      decision = "COMPRA";
+    }
+  } else if (totalScore <= -2) {
+    if (isOversold) {
+      decision = "CAIXA";
+      blockReason = "⚠️ Venda bloqueada: Preço abaixo da Banda Inferior (Exaustão/Sobrevendido).";
+    } else {
+      decision = "VENDA";
+    }
+  } else {
+    blockReason = `✔ Filtro de Scoring: Pontuação insuficiente (${totalScore > 0 ? "+" : ""}${totalScore}). Aguardando alinhamento de fatores.`;
+  }
+
+  // Alvo e Stop baseados no ATR (2.0x ATR para Stop, 3.0x ATR para Alvo)
   const stopDistance = roundToWIN(atr * atrMultiplier);
   const targetDistance = roundToWIN(atr * atrMultiplier * 1.5); // Relação Risco/Retorno 1:1.5
 
-  const stopLoss = isBuy ? roundToWIN(currentPrice - stopDistance) : roundToWIN(currentPrice + stopDistance);
-  const targetProfit = isBuy ? roundToWIN(currentPrice + targetDistance) : roundToWIN(currentPrice - targetDistance);
+  const stopLoss = decision === "COMPRA" ? roundToWIN(currentPrice - stopDistance) : roundToWIN(currentPrice + stopDistance);
+  const targetProfit = decision === "COMPRA" ? roundToWIN(currentPrice + targetDistance) : roundToWIN(currentPrice - targetDistance);
 
   // Dimensionamento Dinâmico de Lote (Contratos)
-  // Risco Financeiro Máximo (R$)
-  const maxRiskCash = (capitalBase * riskPercent) / 100;
   // Risco por contrato do WIN = Distância do Stop em pontos * R$ 0.20
   const riskPerContract = stopDistance * 0.20;
-  // Contratos (mínimo 1)
+  // Contratos = Risco Máximo Financeiro / Risco por contrato
   const contractsSize = Math.max(1, Math.floor(maxRiskCash / riskPerContract));
 
   // Simulação de Retorno PnL
-  const winPointValue = 0.20; // R$ 0,20 por ponto no WIN por contrato
-  const simulatedChange = isBuy ? (currentPrice - basePrice) : (basePrice - currentPrice);
-  const simulatedPL = simulatedChange * winPointValue * contractsSize;
+  const winPointValue = 0.20;
+  const simulatedChange = decision === "COMPRA" ? (currentPrice - basePrice) : (basePrice - currentPrice);
+  const simulatedPL = decision !== "CAIXA" ? simulatedChange * winPointValue * contractsSize : 0.0;
   const simulatedPercent = (simulatedPL / capitalBase) * 100;
 
-  // Geração de dados do gráfico fictício ao redor da KAMA
+  // Geração de dados do gráfico adaptativo
   const chartData = [];
-  const startPrice = roundToWIN(kama - 3000);
-  const endPrice = roundToWIN(kama + 3000);
-  for (let p = startPrice; p <= endPrice; p += 100) {
+  const startPrice = roundToWIN(kama - 4000);
+  const endPrice = roundToWIN(kama + 4000);
+  for (let p = startPrice; p <= endPrice; p += 150) {
     const formattedPrice = roundToWIN(p);
-    const profit = isBuy ? (formattedPrice - currentPrice) * winPointValue * contractsSize : (currentPrice - formattedPrice) * winPointValue * contractsSize;
+    const profit = decision === "COMPRA" 
+      ? (formattedPrice - currentPrice) * winPointValue * contractsSize 
+      : (decision === "VENDA" 
+        ? (currentPrice - formattedPrice) * winPointValue * contractsSize 
+        : 0.0);
     chartData.push({
       price: formattedPrice,
       "PnL Estimado (R$)": Math.round(profit),
@@ -111,7 +159,7 @@ export default function LongShortWin({ initialState, livePriceFromClear }: LongS
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
       
-      {/* Cards de Métricas Principais */}
+      {/* Cards Principais */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         
         {/* Recomendação Operacional */}
@@ -124,90 +172,108 @@ export default function LongShortWin({ initialState, livePriceFromClear }: LongS
             
             <div className="mt-4 flex items-center justify-between">
               <div>
-                <span className="text-xs text-slate-400">Direção Sugerida</span>
-                <div className="text-3xl font-extrabold text-slate-900 tracking-tight mt-0.5">
-                  {signalText}
+                <span className="text-xs text-slate-400">Decisão do Modelo</span>
+                <div className={`text-3xl font-extrabold tracking-tight mt-0.5 ${
+                  decision === "COMPRA" ? "text-emerald-600" : decision === "VENDA" ? "text-rose-600" : "text-slate-500"
+                }`}>
+                  {decision === "COMPRA" ? "COMPRA" : decision === "VENDA" ? "VENDA" : "AGUARDAR (CAIXA)"}
                 </div>
               </div>
-              <span className={`px-3 py-1 rounded-full text-xs font-bold ${isBuy ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>
-                {isBuy ? "Tendência de Alta" : "Tendência de Baixa"}
+              <span className={`px-2.5 py-0.5 rounded text-xs font-bold ${
+                decision === "COMPRA" ? "bg-emerald-100 text-emerald-800" : decision === "VENDA" ? "bg-rose-100 text-rose-800" : "bg-slate-100 text-slate-600"
+              }`}>
+                Score: {totalScore > 0 ? "+" : ""}{totalScore}
               </span>
             </div>
 
-            <div className="space-y-3 mt-6">
-              <div className="flex justify-between items-center py-2 border-b border-slate-100">
-                <span className="text-slate-500 text-sm">Contratos Recomendados</span>
-                <span className="font-bold text-slate-900">{contractsSize} contratos</span>
+            {decision !== "CAIXA" ? (
+              <div className="space-y-3 mt-6">
+                <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                  <span className="text-slate-500 text-sm">Contratos Recomendados</span>
+                  <span className="font-bold text-slate-900">{contractsSize} contratos</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                  <span className="text-slate-500 text-sm">Preço de Entrada</span>
+                  <span className="font-semibold text-slate-800">{currentPrice.toLocaleString("pt-BR")} pts</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                  <span className="text-rose-600 text-sm font-semibold">Stop Loss</span>
+                  <span className="font-bold text-rose-600">{stopLoss.toLocaleString("pt-BR")} pts ({stopDistance} pts)</span>
+                </div>
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-emerald-600 text-sm font-semibold">Alvo (Take Profit)</span>
+                  <span className="font-bold text-emerald-600">{targetProfit.toLocaleString("pt-BR")} pts ({targetDistance} pts)</span>
+                </div>
               </div>
-              <div className="flex justify-between items-center py-2 border-b border-slate-100">
-                <span className="text-slate-500 text-sm">Entrada Referência</span>
-                <span className="font-semibold text-slate-800">{currentPrice.toLocaleString("pt-BR")} pts</span>
+            ) : (
+              <div className="mt-8 p-4 rounded-lg bg-slate-50 border border-slate-150 text-slate-600 text-xs flex items-start gap-2 leading-relaxed">
+                <ShieldAlert className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                <span>{blockReason}</span>
               </div>
-              <div className="flex justify-between items-center py-2 border-b border-slate-100">
-                <span className="text-rose-600 text-sm font-semibold">Stop Loss</span>
-                <span className="font-bold text-rose-600">{stopLoss.toLocaleString("pt-BR")} pts ({stopDistance} pts)</span>
-              </div>
-              <div className="flex justify-between items-center py-2">
-                <span className="text-emerald-600 text-sm font-semibold">Alvo (Take Profit)</span>
-                <span className="font-bold text-emerald-600">{targetProfit.toLocaleString("pt-BR")} pts ({targetDistance} pts)</span>
-              </div>
-            </div>
+            )}
           </div>
           
           <div className="mt-4 pt-4 border-t border-slate-100 text-[10px] text-slate-400 leading-relaxed">
-            ⚠️ <b>Risco Limitado</b>: R$ {maxRiskCash.toFixed(2)} ({riskPercent}% de R$ {capitalBase.toLocaleString("pt-BR")}).
+            💡 <b>Regra Operacional</b>: Entrada liberada se Score ≥ +2 (Compras) ou ≤ -2 (Vendas), filtrado pelas Bandas de exaustão.
           </div>
         </div>
 
-        {/* Parâmetros Quantitativos (WIN + KAMA) */}
+        {/* Monitor Analítico Avançado */}
         <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 left-0 h-1 w-full bg-emerald-500" />
           <div>
             <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
-              <Cpu className="h-4 w-4 text-emerald-500" /> MONITOR ANALÍTICO KAMA
+              <Cpu className="h-4 w-4 text-emerald-500" /> MONITOR DE SINAIS E FILTROS
             </span>
             
-            <div className="mt-4">
-              <span className="text-xs text-slate-400">Preço Atual WIN</span>
-              <div className="text-4xl font-black text-slate-900 tracking-tight mt-0.5">
-                {currentPrice.toLocaleString("pt-BR")} <span className="text-lg font-medium text-slate-400">pts</span>
+            <div className="space-y-3.5 mt-5">
+              <div className="flex justify-between items-center py-1.5 border-b border-slate-100">
+                <span className="text-xs text-slate-500 font-medium">Média KAMA</span>
+                <span className="font-mono text-xs font-bold text-slate-800">{kama.toLocaleString("pt-BR")} pts</span>
               </div>
-            </div>
-
-            <div className="space-y-3 mt-6">
-              <div className="flex justify-between items-center py-2 border-b border-slate-100">
-                <span className="text-slate-500 text-sm">Média Adaptativa KAMA</span>
-                <span className="font-semibold text-slate-800">{kama.toLocaleString("pt-BR")} pts</span>
+              <div className="flex justify-between items-center py-1.5 border-b border-slate-100">
+                <span className="text-xs text-slate-500 font-medium">Banda KAMA Superior</span>
+                <span className="font-mono text-xs font-semibold text-slate-600">{bollingerUpper.toLocaleString("pt-BR")} pts</span>
               </div>
-              <div className="flex justify-between items-center py-2 border-b border-slate-100">
-                <span className="text-slate-500 text-sm">Afastamento da KAMA</span>
-                <span className={`font-semibold ${distToKama >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                  {distToKama >= 0 ? "+" : ""}{distToKama.toFixed(2)}%
+              <div className="flex justify-between items-center py-1.5 border-b border-slate-100">
+                <span className="text-xs text-slate-500 font-medium">Banda KAMA Inferior</span>
+                <span className="font-mono text-xs font-semibold text-slate-600">{bollingerLower.toLocaleString("pt-BR")} pts</span>
+              </div>
+              <div className="flex justify-between items-center py-1.5 border-b border-slate-100">
+                <span className="text-xs text-slate-500 font-medium">Connors RSI (3,2,100)</span>
+                <span className={`font-mono text-xs font-bold ${
+                  connorsRsi > 70 ? "text-rose-600" : connorsRsi < 30 ? "text-emerald-600" : "text-indigo-600"
+                }`}>
+                  {connorsRsi} ({connorsRsi > 70 ? "Sobrecomprado" : connorsRsi < 30 ? "Sobrevendido" : "Neutro"})
                 </span>
               </div>
-              <div className="flex justify-between items-center py-2 border-b border-slate-100">
-                <span className="text-slate-500 text-sm">Volatilidade ATR (14d)</span>
-                <span className="font-semibold text-slate-800">{atr} pontos</span>
+              <div className="flex justify-between items-center py-1.5 border-b border-slate-100">
+                <span className="text-xs text-slate-500 font-medium">Filtro de Kalman</span>
+                <span className="font-mono text-xs font-bold text-slate-800">{kalmanPrice.toLocaleString("pt-BR")} pts</span>
               </div>
-              <div className="flex justify-between items-center py-2">
-                <span className="text-slate-500 text-sm">Risco Monetário / Contrato</span>
-                <span className="font-semibold text-slate-800">R$ {riskPerContract.toFixed(2)}</span>
+              <div className="flex justify-between items-center py-1.5">
+                <span className="text-xs text-slate-500 font-medium">Tendência Kalman</span>
+                <span className={`font-mono text-xs font-bold flex items-center gap-1 ${
+                  kalmanTrend === "UP" ? "text-emerald-600" : "text-rose-600"
+                }`}>
+                  {kalmanTrend === "UP" ? "📈 ALTA" : "📉 BAIXA"}
+                </span>
               </div>
             </div>
           </div>
           
           <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-mono">
-            <span>Tick Mínimo: 5 pontos</span>
-            <span>Multiplier: R$ 0,20</span>
+            <span>ATR (14d): {atr} pts</span>
+            <span>Risco por Contrato: R$ {riskPerContract.toFixed(0)}</span>
           </div>
         </div>
 
-        {/* Configurações de Risco do Usuário */}
+        {/* Gestão de Risco FAPI */}
         <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 left-0 h-1 w-full bg-purple-500" />
           <div>
             <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
-              <Activity className="h-4 w-4 text-purple-500" /> PARÂMETROS DE GESTÃO DE RISCO
+              <Sliders className="h-4 w-4 text-purple-500" /> PARÂMETROS DE CONTROLE DE RISCO
             </span>
 
             <div className="space-y-4 mt-6">
@@ -217,24 +283,20 @@ export default function LongShortWin({ initialState, livePriceFromClear }: LongS
                 <input 
                   type="number" 
                   value={capitalBase} 
-                  onChange={(e) => setCapitalBase(Math.max(1000, parseFloat(e.target.value) || 10000))}
+                  onChange={(e) => setCapitalBase(Math.max(1000, parseFloat(e.target.value) || 100000))}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
-              {/* Risco % */}
+              {/* Risco Financeiro Máximo */}
               <div>
-                <label className="text-xs text-slate-400 block mb-1">Limite de Risco por Operação (%)</label>
-                <select 
-                  value={riskPercent} 
-                  onChange={(e) => setRiskPercent(parseFloat(e.target.value))}
+                <label className="text-xs text-slate-400 block mb-1">Perda Máxima por Trade (R$)</label>
+                <input 
+                  type="number" 
+                  value={maxRiskCash} 
+                  onChange={(e) => setMaxRiskCash(Math.max(100, parseFloat(e.target.value) || 1000))}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none focus:border-indigo-500"
-                >
-                  <option value="0.5">0.5% (Conservador)</option>
-                  <option value="1.0">1.0% (Moderado)</option>
-                  <option value="2.0">2.0% (Agressivo)</option>
-                  <option value="5.0">5.0% (Alavancado)</option>
-                </select>
+                />
               </div>
 
               {/* Multiplicador ATR */}
@@ -243,16 +305,16 @@ export default function LongShortWin({ initialState, livePriceFromClear }: LongS
                 <input 
                   type="range" 
                   min="1.0" 
-                  max="3.5" 
+                  max="3.0" 
                   step="0.5"
                   value={atrMultiplier} 
                   onChange={(e) => setAtrMultiplier(parseFloat(e.target.value))}
                   className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-purple-600 focus:outline-none"
                 />
                 <div className="flex justify-between text-[10px] text-slate-400 font-mono mt-1">
-                  <span>1.0x</span>
+                  <span>1.0x (Agressivo)</span>
                   <span className="text-purple-600 font-bold">{atrMultiplier}x ATR</span>
-                  <span>3.5x</span>
+                  <span>3.0x (Conservador)</span>
                 </div>
               </div>
             </div>
@@ -291,9 +353,9 @@ export default function LongShortWin({ initialState, livePriceFromClear }: LongS
           />
           
           <div className="flex justify-between text-xs text-slate-400 font-mono">
-            <span>MÍN: {(kama - 4000).toLocaleString("pt-BR")} pts</span>
+            <span>Banda Inferior: {bollingerLower.toLocaleString("pt-BR")} pts</span>
             <span className="text-indigo-600 font-bold">KAMA: {kama.toLocaleString("pt-BR")} pts</span>
-            <span>MÁX: {(kama + 4000).toLocaleString("pt-BR")} pts</span>
+            <span>Banda Superior: {bollingerUpper.toLocaleString("pt-BR")} pts</span>
           </div>
         </div>
       </section>
@@ -321,6 +383,8 @@ export default function LongShortWin({ initialState, livePriceFromClear }: LongS
               />
               <ReferenceLine x={kama} stroke="#6366f1" strokeDasharray="4 4" label={{ value: "KAMA", fill: "#6366f1", fontSize: 10, position: "top" }} />
               <ReferenceLine x={currentPrice} stroke="#10b981" label={{ value: "Preço Simulado", fill: "#10b981", fontSize: 10, position: "top" }} />
+              <ReferenceLine x={bollingerUpper} stroke="#f59e0b" strokeDasharray="2 2" label={{ value: "Bollinger Upper", fill: "#f59e0b", fontSize: 8, position: "insideTopRight" }} />
+              <ReferenceLine x={bollingerLower} stroke="#f59e0b" strokeDasharray="2 2" label={{ value: "Bollinger Lower", fill: "#f59e0b", fontSize: 8, position: "insideTopLeft" }} />
               <Line type="monotone" dataKey="PnL Estimado (R$)" stroke="#8b5cf6" strokeWidth={2.5} dot={false} activeDot={{ r: 6 }} />
             </LineChart>
           </ResponsiveContainer>
