@@ -85,6 +85,53 @@ const getOptionType = (ticker: string) => {
   return null;
 };
 
+const getOptionDetails = (ticker: string, activeQuotes: any, state: any) => {
+  if (!ticker.startsWith("BBDC") || ticker.length <= 4) return { strike: null, expiration: null };
+  const letter = ticker[4].toUpperCase();
+  
+  // Determine strike
+  let strike: number | null = null;
+  if (ticker === "BBDCS2") strike = 17.39;
+  else if (ticker === "BBDCG194") strike = 19.14;
+  else if (ticker === "BBDCS167") strike = 16.89;
+  else if (ticker === state.active_put_ticker && state.active_put_strike) strike = state.active_put_strike;
+  else if (ticker === state.active_call_ticker && state.active_call_strike) strike = state.active_call_strike;
+  else {
+    if (ticker === activeQuotes?.put?.ticker) strike = activeQuotes.put.strike;
+    else if (ticker === activeQuotes?.call?.ticker) strike = activeQuotes.call.strike;
+    else if (ticker === activeQuotes?.put_275?.ticker) strike = activeQuotes.put_275.strike;
+    else if (ticker === activeQuotes?.call_275?.ticker) strike = activeQuotes.call_275.strike;
+    else if (ticker === activeQuotes?.put_50?.ticker) strike = activeQuotes.put_50.strike;
+    else if (ticker === activeQuotes?.call_50?.ticker) strike = activeQuotes.call_50.strike;
+    else if (ticker === activeQuotes?.call_06?.ticker) strike = activeQuotes.call_06.strike;
+  }
+
+  // Determine expiration
+  let expiration: string | null = null;
+  const monthCodes = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X"];
+  const index = monthCodes.indexOf(letter);
+  if (index !== -1) {
+    const monthNum = index % 12;
+    const thirdFridays: { [key: number]: string } = {
+      0: "16/01/2026",
+      1: "20/02/2026",
+      2: "20/03/2026",
+      3: "17/04/2026",
+      4: "15/05/2026",
+      5: "19/06/2026",
+      6: "17/07/2026",
+      7: "21/08/2026",
+      8: "18/09/2026",
+      9: "16/10/2026",
+      10: "20/11/2026",
+      11: "18/12/2026"
+    };
+    expiration = thirdFridays[monthNum] || null;
+  }
+
+  return { strike, expiration };
+};
+
 export default function Dashboard({ initialState, initialHistory, activeQuotes, winIndicators, winLivePrice, initialCustody, initialWinTicker }: DashboardProps) {
   const [isMounted, setIsMounted] = useState(false);
   const [activeTab, setActiveTab] = useState<"bbdc4" | "win">("bbdc4");
@@ -375,6 +422,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
       }
 
       const pnlPercent = (itemPL / (entryPrice * qty)) * 100;
+      const { strike, expiration } = getOptionDetails(item.ticker, liveQuotes, state);
 
       if (itemQty > 0 || Math.abs(itemPL) > 0.01) {
         optionsInCustody.push({
@@ -384,7 +432,9 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
           avgPrice: originalPremium,
           mktPrice: itemQty > 0 ? mktPrice : (item.averageCost || originalPremium),
           pnl: itemPL,
-          pnlPercent: pnlPercent
+          pnlPercent: pnlPercent,
+          strike: strike,
+          expiration: expiration
         });
       }
     });
@@ -395,6 +445,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
         ? (putMktPrice - putCost) * putQty
         : (custodyPutItem?.averageCost ? (custodyPutItem.averageCost - putCost) * qty : 0);
       calculatedPutsPL = putPL;
+      const { strike, expiration } = getOptionDetails(putTicker, liveQuotes, state);
       optionsInCustody.push({
         ticker: putTicker,
         type: `Put Long (${putQty > 0 ? "Ativa" : "Encerrada"})`,
@@ -402,7 +453,9 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
         avgPrice: putCost,
         mktPrice: putQty > 0 ? putMktPrice : 0,
         pnl: putPL,
-        pnlPercent: (putPL / (entryPrice * qty)) * 100
+        pnlPercent: (putPL / (entryPrice * qty)) * 100,
+        strike: strike,
+        expiration: expiration
       });
     }
 
@@ -412,6 +465,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
         ? (callIncome - callMktPrice) * callQty
         : (custodyCallItem?.averageCost ? (callIncome - custodyCallItem.averageCost) * qty : 0);
       calculatedCallsPL = callPL;
+      const { strike, expiration } = getOptionDetails(callTicker, liveQuotes, state);
       optionsInCustody.push({
         ticker: callTicker,
         type: `Call Short (${callQty > 0 ? "Ativa" : "Encerrada"})`,
@@ -419,7 +473,9 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
         avgPrice: callIncome,
         mktPrice: callQty > 0 ? callMktPrice : 0,
         pnl: callPL,
-        pnlPercent: (callPL / (entryPrice * qty)) * 100
+        pnlPercent: (callPL / (entryPrice * qty)) * 100,
+        strike: strike,
+        expiration: expiration
       });
     }
   }
@@ -915,6 +971,8 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                   <tr>
                     <th scope="col" className="px-6 py-4 font-bold text-zinc-900">Ativo / Ticker</th>
                     <th scope="col" className="px-6 py-4 font-bold">Tipo</th>
+                    <th scope="col" className="px-6 py-4 font-bold text-right">Strike</th>
+                    <th scope="col" className="px-6 py-4 font-bold text-right">Vencimento</th>
                     <th scope="col" className="px-6 py-4 font-bold text-right">Quantidade</th>
                     <th scope="col" className="px-6 py-4 font-bold text-right">Preço Médio</th>
                     <th scope="col" className="px-6 py-4 font-bold text-right">Cotação Atual</th>
@@ -926,6 +984,8 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                     <tr key={idx} className="hover:bg-zinc-50/50 transition-all font-mono">
                       <td className="px-6 py-4 font-bold text-zinc-950">{item.ticker}</td>
                       <td className="px-6 py-4 text-xs text-zinc-500 font-sans">{item.type}</td>
+                      <td className="px-6 py-4 text-right">{item.strike ? `R$ ${item.strike.toFixed(2)}` : "-"}</td>
+                      <td className="px-6 py-4 text-right text-xs">{item.expiration || "-"}</td>
                       <td className="px-6 py-4 text-right font-bold text-zinc-800">{item.qty.toLocaleString("pt-BR")}</td>
                       <td className="px-6 py-4 text-right">R$ {item.avgPrice.toFixed(2)}</td>
                       <td className="px-6 py-4 text-right">R$ {item.mktPrice.toFixed(2)}</td>
