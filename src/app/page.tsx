@@ -1,5 +1,5 @@
 import { getHedgeState, getMetricsHistory } from "@/lib/db";
-import { fetchActiveOptionsQuotes, getClearAccessToken, fetchClearQuote } from "@/lib/options";
+import { fetchActiveOptionsQuotes, getClearAccessToken, fetchClearQuote, getActiveWinTicker, fetchClearCustody } from "@/lib/options";
 import { getWinQuantIndicators } from "@/lib/quant_win";
 import Dashboard from "../components/Dashboard";
 
@@ -50,15 +50,19 @@ export default async function Home() {
     };
   }
 
-  // Busca preço real do WIN (usando IBOV como correspondente perfeito de pontos) via Clear API
+  let initialCustody: any[] | null = null;
+  const winTicker = getActiveWinTicker();
+
+  // Busca preço real do WIN e custódia via Clear API
   if (process.env.CLEAR_API_KEY && process.env.CLEAR_CLIENT_SECRET) {
     try {
       const clearToken = await getClearAccessToken(process.env.CLEAR_API_KEY, process.env.CLEAR_CLIENT_SECRET);
       if (clearToken) {
-        winLivePrice = await fetchClearQuote("IBOV", clearToken);
+        winLivePrice = await fetchClearQuote(winTicker, clearToken);
+        initialCustody = await fetchClearCustody(clearToken);
       }
     } catch (e) {
-      console.error("[page] Falha ao carregar cotação do WIN via Clear API:", e);
+      console.error("[page] Falha ao carregar cotações/custódia via Clear API:", e);
     }
   }
 
@@ -85,6 +89,8 @@ export default async function Home() {
       activeQuotes={activeQuotes}
       winIndicators={winIndicators}
       winLivePrice={winLivePrice}
+      initialCustody={initialCustody}
+      initialWinTicker={winTicker}
     />
   );
 }

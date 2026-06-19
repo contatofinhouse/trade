@@ -73,9 +73,11 @@ interface DashboardProps {
     kalman_trend: "UP" | "DOWN";
   };
   winLivePrice?: number | null;
+  initialCustody?: any[] | null;
+  initialWinTicker?: string;
 }
 
-export default function Dashboard({ initialState, initialHistory, activeQuotes, winIndicators, winLivePrice }: DashboardProps) {
+export default function Dashboard({ initialState, initialHistory, activeQuotes, winIndicators, winLivePrice, initialCustody, initialWinTicker }: DashboardProps) {
   const [isMounted, setIsMounted] = useState(false);
   const [activeTab, setActiveTab] = useState<"bbdc4" | "win">("bbdc4");
   const [simulatedPrice, setSimulatedPrice] = useState(17.66); // Default current price
@@ -84,8 +86,8 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   const [liveWinPrice, setLiveWinPrice] = useState(winLivePrice);
   const [liveState, setLiveState] = useState(initialState);
   const [isFetchingQuotes, setIsFetchingQuotes] = useState(false);
-  const [liveCustody, setLiveCustody] = useState<any[] | null>(null);
-  const [liveWinTicker, setLiveWinTicker] = useState("WINQ26");
+  const [liveCustody, setLiveCustody] = useState<any[] | null>(initialCustody || null);
+  const [liveWinTicker, setLiveWinTicker] = useState(initialWinTicker || "WINQ26");
 
   const state = liveState || {
     hedge_active: true,
