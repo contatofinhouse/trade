@@ -195,7 +195,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
     const custodyPut = liveCustody.find((item: any) => 
       item.ticker.startsWith("BBDC") && 
       (item.ticker.includes("S") || item.ticker.includes("T") || item.ticker.includes("U") || item.ticker.includes("V") || item.ticker.includes("W") || item.ticker.includes("X") || item.ticker.includes("Y")) &&
-      item.availableQuantity > 0
+      (Math.abs(item.availableQuantity || 0) > 0 || Math.abs(item.collateralBlockedQuantity || 0) > 0)
     );
     if (custodyPut) {
       putTicker = custodyPut.ticker;
@@ -210,7 +210,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
     const custodyCall = liveCustody.find((item: any) => 
       item.ticker.startsWith("BBDC") && 
       (item.ticker.includes("G") || item.ticker.includes("H") || item.ticker.includes("I") || item.ticker.includes("J") || item.ticker.includes("K") || item.ticker.includes("L") || item.ticker.includes("A") || item.ticker.includes("B") || item.ticker.includes("C") || item.ticker.includes("D") || item.ticker.includes("E") || item.ticker.includes("F")) &&
-      (item.availableQuantity > 0 || item.collateralBlockedQuantity > 0 || item.averageCost > 0)
+      (Math.abs(item.availableQuantity || 0) > 0 || Math.abs(item.collateralBlockedQuantity || 0) > 0)
     );
     if (custodyCall) {
       callTicker = custodyCall.ticker;
@@ -367,22 +367,22 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
     const targetCallTicker = liveQuotes?.call_06?.ticker || "BBDCG200";
     const targetCallStrike = liveQuotes?.call_06?.strike || 20.00;
 
-    if (state.active_put_ticker && state.active_put_strike) {
+    if (putTicker && putStrike) {
       orderLegs.push({
         action: "VENDA",
-        ticker: state.active_put_ticker,
+        ticker: putTicker,
         qty: qty,
-        strike: state.active_put_strike,
+        strike: putStrike,
         nature: "Desmontar Put (Zerar Proteção)",
         color: "red"
       });
     }
-    if (state.active_call_ticker) {
+    if (callTicker && callStrike) {
       orderLegs.push({
         action: "COMPRA",
-        ticker: state.active_call_ticker,
+        ticker: callTicker,
         qty: qty,
-        strike: state.active_call_strike,
+        strike: callStrike,
         nature: "Recomprar Call Atual (Encerrar)",
         color: "green"
       });
@@ -415,12 +415,12 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
       nature: "Comprar Put ATM nova (Δ ≈ -0.50)",
       color: "green"
     });
-    if (state.active_call_ticker) {
+    if (callTicker && callStrike) {
       orderLegs.push({
         action: "COMPRA",
-        ticker: state.active_call_ticker,
+        ticker: callTicker,
         qty: qty,
-        strike: state.active_call_strike,
+        strike: callStrike,
         nature: "Recomprar Call Atual (Encerrar)",
         color: "green"
       });
