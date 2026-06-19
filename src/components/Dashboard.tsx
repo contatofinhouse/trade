@@ -80,7 +80,12 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   const [activeTab, setActiveTab] = useState<"bbdc4" | "win">("bbdc4");
   const [simulatedPrice, setSimulatedPrice] = useState(17.66); // Default current price
   
-  const state = initialState || {
+  const [liveQuotes, setLiveQuotes] = useState(activeQuotes);
+  const [liveWinPrice, setLiveWinPrice] = useState(winLivePrice);
+  const [liveState, setLiveState] = useState(initialState);
+  const [isFetchingQuotes, setIsFetchingQuotes] = useState(false);
+
+  const state = liveState || {
     hedge_active: true,
     activation_date: "2026-06-18",
     activation_price: 17.80,
@@ -97,15 +102,49 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
 
   useEffect(() => {
     setIsMounted(true);
-    if (activeQuotes?.underlyingPrice) {
-      setSimulatedPrice(activeQuotes.underlyingPrice);
+  }, []);
+
+  useEffect(() => {
+    if (liveQuotes?.underlyingPrice) {
+      setSimulatedPrice(liveQuotes.underlyingPrice);
     } else if (initialHistory && initialHistory.length > 0) {
       const latestPrice = parseFloat(initialHistory[initialHistory.length - 1].preco_fechamento);
       if (!isNaN(latestPrice)) {
         setSimulatedPrice(latestPrice);
       }
     }
-  }, [initialHistory, activeQuotes]);
+  }, [initialHistory, liveQuotes]);
+
+  useEffect(() => {
+    let intervalId: any;
+    if (isMounted) {
+      intervalId = setInterval(async () => {
+        try {
+          setIsFetchingQuotes(true);
+          const res = await fetch("/api/quotes");
+          if (res.ok) {
+            const data = await res.json();
+            if (data.activeQuotes) {
+              setLiveQuotes(data.activeQuotes);
+            }
+            if (data.winLivePrice !== undefined) {
+              setLiveWinPrice(data.winLivePrice);
+            }
+            if (data.state) {
+              setLiveState(data.state);
+            }
+          }
+        } catch (error) {
+          console.error("Erro ao buscar cotações atualizadas:", error);
+        } finally {
+          setIsFetchingQuotes(false);
+        }
+      }, 10000); // 10 segundos
+    }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [isMounted]);
 
   const qty = state.quantity;
   const entryPrice = state.activation_price;
@@ -144,7 +183,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
 
   // Cotações e Gregas Ativas (Real-Time)
   const putQuote = state.active_put_ticker 
-    ? (activeQuotes?.put || {
+    ? (liveQuotes?.put || {
         ticker: state.active_put_ticker,
         strike: state.active_put_strike || 17.39,
         price: 0.28,
@@ -153,7 +192,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
       }) 
     : null;
 
-  const callQuote = activeQuotes?.call || {
+  const callQuote = liveQuotes?.call || {
     ticker: state.active_call_ticker || "BBDCG194",
     strike: state.active_call_strike || 19.14,
     price: 0.09,
@@ -175,7 +214,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   const hedgeRatio = (1 - netDeltaPerShare) * 100; // Porcentagem do risco mitigada pelo hedge
 
   // Preço corrente real (não simulado)
-  const livePrice = activeQuotes?.underlyingPrice || currentClose;
+  const livePrice = liveQuotes?.underlyingPrice || currentClose;
   const distToKama = ((livePrice - currentKAMA) / currentKAMA) * 100;
 
   // Cálculo de Skew do Smile (Put IV - Call IV)
@@ -218,10 +257,10 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   const ivZScore = calculateIVZScore(initialHistory || [], currentPutIV);
 
   // Skew da Superfície Matemático (Put Delta -0.375 IV vs Call Delta 0.131 IV)
-  const skewSuperficie = activeQuotes?.skew !== undefined && activeQuotes?.skew !== null
-    ? activeQuotes.skew
-    : (activeQuotes?.put_375 && activeQuotes?.call_131
-      ? (activeQuotes.put_375.iv - activeQuotes.call_131.iv) * 100
+  const skewSuperficie = liveQuotes?.skew !== undefined && liveQuotes?.skew !== null
+    ? liveQuotes.skew
+    : (liveQuotes?.put_375 && liveQuotes?.call_131
+      ? (liveQuotes.put_375.iv - liveQuotes.call_131.iv) * 100
       : smileSkew);
 
   // ────────────────────────────────────────────────
@@ -237,7 +276,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   }
 
   let signalTitle = "MANTER CARREGAMENTO";
-  let signalColorClass = "border-emerald-200 bg-emerald-50/50 text-emerald-950 bg-emerald-600";
+  let signalColorClass = "border-zinc-200 bg-zinc-50 text-zinc-900 bg-zinc-900";
   let signalAction = "Manter Estrutura Atual";
   let orderLegs: OrderLeg[] = [];
   let signalNote = "";
@@ -248,12 +287,12 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
 
   if (isCrossoverAbove) {
     signalTitle = "TRANSIÇÃO: ALTA (REGIME A)";
-    signalColorClass = "border-indigo-200 bg-indigo-50/50 text-indigo-950 bg-indigo-600";
+    signalColorClass = "border-zinc-200 bg-zinc-50 text-zinc-900 bg-zinc-900";
     signalAction = "Desmontar Put + Rolar Call para OTM";
-    signalNote = `⚠️ Cruzamento UP — Preço R$ ${livePrice.toFixed(2)} ultrapassou KAMA R$ ${currentKAMA.toFixed(2)}`;
+    signalNote = "Cruzamento UP — Preço R$ " + livePrice.toFixed(2) + " ultrapassou KAMA R$ " + currentKAMA.toFixed(2);
 
-    const targetCallTicker = activeQuotes?.call_06?.ticker || "BBDCG200";
-    const targetCallStrike = activeQuotes?.call_06?.strike || 20.00;
+    const targetCallTicker = liveQuotes?.call_06?.ticker || "BBDCG200";
+    const targetCallStrike = liveQuotes?.call_06?.strike || 20.00;
 
     if (state.active_put_ticker && state.active_put_strike) {
       orderLegs.push({
@@ -286,14 +325,14 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
 
   } else if (isCrossoverBelow) {
     signalTitle = "TRANSIÇÃO: PROTEÇÃO (REGIME B)";
-    signalColorClass = "border-rose-200 bg-rose-50/50 text-rose-950 bg-rose-600";
+    signalColorClass = "border-zinc-200 bg-zinc-50 text-zinc-900 bg-zinc-900";
     signalAction = "Montar Put ATM + Rolar Call para ATM";
-    signalNote = `⚠️ Cruzamento DOWN — Preço R$ ${livePrice.toFixed(2)} caiu abaixo da KAMA R$ ${currentKAMA.toFixed(2)}`;
+    signalNote = "Cruzamento DOWN — Preço R$ " + livePrice.toFixed(2) + " caiu abaixo da KAMA R$ " + currentKAMA.toFixed(2);
 
-    const targetPutTicker = activeQuotes?.put_50?.ticker || "BBDCS175";
-    const targetPutStrike = activeQuotes?.put_50?.strike || parseFloat(livePrice.toFixed(0)) + 0.00;
-    const targetCallTicker = activeQuotes?.call_50?.ticker || "BBDCG175";
-    const targetCallStrike = activeQuotes?.call_50?.strike || parseFloat(livePrice.toFixed(0)) + 0.00;
+    const targetPutTicker = liveQuotes?.put_50?.ticker || "BBDCS175";
+    const targetPutStrike = liveQuotes?.put_50?.strike || parseFloat(livePrice.toFixed(0)) + 0.00;
+    const targetCallTicker = liveQuotes?.call_50?.ticker || "BBDCG175";
+    const targetCallStrike = liveQuotes?.call_50?.strike || parseFloat(livePrice.toFixed(0)) + 0.00;
 
     orderLegs.push({
       action: "COMPRA",
@@ -325,14 +364,14 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   } else {
     if (currentRegime === "A") {
       signalTitle = "REGIME A — ALTA ATIVA";
-      signalColorClass = "border-emerald-200 bg-emerald-50/50 text-emerald-950 bg-emerald-600";
+      signalColorClass = "border-zinc-200 bg-zinc-50 text-zinc-900 bg-zinc-900";
       signalAction = "Nenhuma Ordem Necessária";
-      signalNote = `✔ Preço (R$ ${livePrice.toFixed(2)}) acima da KAMA (R$ ${currentKAMA.toFixed(2)}). Exposição direcional máxima.`;
+      signalNote = "Preço (R$ " + livePrice.toFixed(2) + ") acima da KAMA (R$ " + currentKAMA.toFixed(2) + "). Exposição direcional máxima.";
     } else {
       signalTitle = "REGIME B — HEDGE ATIVO";
-      signalColorClass = "border-blue-200 bg-blue-50/50 text-blue-950 bg-blue-600";
+      signalColorClass = "border-zinc-200 bg-zinc-50 text-zinc-900 bg-zinc-900";
       signalAction = "Nenhuma Ordem Necessária";
-      signalNote = `✔ Preço (R$ ${livePrice.toFixed(2)}) abaixo da KAMA (R$ ${currentKAMA.toFixed(2)}). Caixa sintético preservado.`;
+      signalNote = "Preço (R$ " + livePrice.toFixed(2) + ") abaixo da KAMA (R$ " + currentKAMA.toFixed(2) + "). Caixa sintético preservado.";
     }
   }
 
@@ -419,31 +458,31 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   };
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-800 font-sans antialiased selection:bg-indigo-100">
+    <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans antialiased selection:bg-zinc-200">
       
       {/* Tab Selector */}
-      <div className="bg-slate-900 border-b border-slate-800 text-white sticky top-0 z-50 shadow-sm">
+      <div className="bg-white border-b border-zinc-200 text-zinc-900 sticky top-0 z-50 shadow-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex space-x-8 h-14 items-center">
             <button
               onClick={() => setActiveTab("bbdc4")}
-              className={`text-sm font-bold h-full border-b-2 px-1 transition-all cursor-pointer ${
+              className={`text-xs font-bold uppercase tracking-wider h-full border-b-2 px-1 transition-all cursor-pointer ${
                 activeTab === "bbdc4"
-                  ? "border-indigo-500 text-white"
-                  : "border-transparent text-slate-400 hover:text-slate-200"
+                  ? "border-zinc-900 text-zinc-950"
+                  : "border-transparent text-zinc-400 hover:text-zinc-600"
               }`}
             >
-              🛡️ BBDC4 Collar
+              BBDC4 Collar
             </button>
             <button
               onClick={() => setActiveTab("win")}
-              className={`text-sm font-bold h-full border-b-2 px-1 transition-all cursor-pointer ${
+              className={`text-xs font-bold uppercase tracking-wider h-full border-b-2 px-1 transition-all cursor-pointer ${
                 activeTab === "win"
-                  ? "border-indigo-500 text-white"
-                  : "border-transparent text-slate-400 hover:text-slate-200"
+                  ? "border-zinc-900 text-zinc-950"
+                  : "border-transparent text-zinc-400 hover:text-zinc-600"
               }`}
             >
-              ⚡ LONG/SHORT WIN
+              LONG/SHORT WIN
             </button>
           </div>
         </div>
@@ -452,27 +491,26 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
       {activeTab === "win" ? (
         <div className="animate-in fade-in duration-300">
           <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-slate-200">
+            <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-zinc-200">
               <div>
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-slate-100 text-slate-600 border border-slate-200">
+                  <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-600 border border-zinc-200">
                     Quantitative Trend Following
                   </span>
-                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                    ⚡ Monitor Operacional Futuro (WIN)
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-zinc-50 text-zinc-700 border border-zinc-200">
+                    Monitor Operacional Futuro (WIN)
                   </span>
                 </div>
-                <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">
-                  Trend Following: <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">LONG/SHORT WIN</span>
+                <h1 className="text-3xl font-extrabold tracking-tight text-zinc-900">
+                  Trend Following: <span className="text-zinc-950">LONG/SHORT WIN</span>
                 </h1>
               </div>
               
               <div className="flex flex-col md:text-right">
-                <span className="text-xs text-slate-400">Ativo de Referência</span>
-                <span className="text-sm font-semibold text-slate-700">Mini Índice Futuro</span>
+                <span className="text-xs text-zinc-400">Ativo de Referência</span>
+                <span className="text-sm font-semibold text-zinc-700">Mini Índice Futuro</span>
               </div>
             </header>
-            
             <LongShortWin
               initialState={winIndicators || { 
                 close_price: 120000, 
@@ -486,7 +524,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                 kalman_price: 120000,
                 kalman_trend: "UP"
               }}
-              livePriceFromClear={winLivePrice}
+              livePriceFromClear={liveWinPrice}
             />
           </main>
         </div>
@@ -496,85 +534,81 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
           <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         {/* Header */}
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-slate-200">
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-zinc-200">
           <div>
             <div className="flex items-center gap-2 mb-1.5">
-              <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-slate-100 text-slate-600 border border-slate-200">
+              <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-600 border border-zinc-200">
                 Quantitative Portfolio
               </span>
               {getStatusBadge()}
             </div>
-            <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">
-              Monitor de Hedge: <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-emerald-600">BBDC4 Collar</span>
+            <h1 className="text-3xl font-extrabold tracking-tight text-zinc-900">
+              Monitor de Hedge: <span className="text-zinc-950">BBDC4 Collar</span>
             </h1>
           </div>
           
           <div className="flex flex-col md:text-right">
-            <span className="text-xs text-slate-400">Operação Iniciada em</span>
-            <span className="text-sm font-semibold text-slate-700">
+            <span className="text-xs text-zinc-400">Operação Iniciada em</span>
+            <span className="text-sm font-semibold text-zinc-700">
               {new Date(state.activation_date).toLocaleDateString("pt-BR")}
             </span>
           </div>
-        </header>
-
-        {/* Dashboard Grid */}
+        </header>        {/* Dashboard Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           
           {/* Card: Detalhes da Operação */}
-          <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm relative overflow-hidden">
-            <div className="absolute top-0 left-0 h-1 w-full bg-indigo-600" />
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2 mb-4">
-              <Layers className="h-4 w-4 text-indigo-500" /> Detalhes da Estrutura
+          <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-4 font-mono">
+              <Layers className="h-4 w-4 text-zinc-500" /> DETALHES DA ESTRUTURA
             </h3>
             
             <div className="space-y-4">
-              <div className="flex justify-between items-center py-2 border-b border-slate-100">
-                <span className="text-slate-500 text-sm">Ações BBDC4</span>
-                <span className="font-semibold text-slate-900">{qty.toLocaleString("pt-BR")} Qtd @ R$ {entryPrice.toFixed(2)}</span>
+              <div className="flex justify-between items-center py-2 border-b border-zinc-100">
+                <span className="text-zinc-500 text-sm">Ações BBDC4</span>
+                <span className="font-mono text-sm font-semibold text-zinc-900">{qty.toLocaleString("pt-BR")} Qtd @ R$ {entryPrice.toFixed(2)}</span>
               </div>
-              <div className="flex justify-between items-center py-2 border-b border-slate-100">
-                <span className="text-slate-500 text-sm">Put Long (Proteção)</span>
-                <span className="font-semibold text-emerald-600">
+              <div className="flex justify-between items-center py-2 border-b border-zinc-100">
+                <span className="text-zinc-500 text-sm">Put Long (Proteção)</span>
+                <span className="font-mono text-sm font-semibold text-emerald-600">
                   {state.active_put_ticker 
                     ? `${state.active_put_ticker} (K: R$ ${state.active_put_strike?.toFixed(2)})` 
                     : "DESMONTADA (Regime A)"}
                 </span>
               </div>
-              <div className="flex justify-between items-center py-2 border-b border-slate-100">
-                <span className="text-slate-500 text-sm">Call Short (Financ.)</span>
-                <span className="font-semibold text-amber-600">{state.active_call_ticker} (K: R$ {callStrike.toFixed(2)})</span>
+              <div className="flex justify-between items-center py-2 border-b border-zinc-100">
+                <span className="text-zinc-500 text-sm">Call Short (Financ.)</span>
+                <span className="font-mono text-sm font-semibold text-zinc-800">{state.active_call_ticker} (K: R$ {callStrike.toFixed(2)})</span>
               </div>
-              <div className="flex justify-between items-center py-2 border-b border-slate-100">
-                <span className="text-slate-500 text-sm">Prêmio da Put Pago</span>
-                <span className="font-semibold text-slate-700">
+              <div className="flex justify-between items-center py-2 border-b border-zinc-100">
+                <span className="text-zinc-500 text-sm">Prêmio da Put Pago</span>
+                <span className="font-mono text-sm font-semibold text-zinc-700">
                   {state.active_put_ticker 
                     ? `R$ ${putCost.toFixed(2)} (- R$ ${Math.round(putCost * qty)})` 
                     : "R$ 0,00"}
                 </span>
               </div>
-              <div className="flex justify-between items-center py-2 border-b border-slate-100">
-                <span className="text-slate-500 text-sm">Prêmio da Call Recebido</span>
-                <span className="font-semibold text-slate-700">R$ {callIncome.toFixed(2)} (+ R$ {Math.round(callIncome * qty)})</span>
+              <div className="flex justify-between items-center py-2 border-b border-zinc-100">
+                <span className="text-zinc-500 text-sm">Prêmio da Call Recebido</span>
+                <span className="font-mono text-sm font-semibold text-zinc-700">R$ {callIncome.toFixed(2)} (+ R$ {Math.round(callIncome * qty)})</span>
               </div>
               <div className="flex justify-between items-center pt-2">
-                <span className="text-slate-500 text-sm">Custo Líquido do Hedge</span>
-                <span className="font-semibold text-slate-900">R$ {netCost.toFixed(2)} (- R$ {Math.round(netCost * qty)})</span>
+                <span className="text-zinc-500 text-sm">Custo Líquido do Hedge</span>
+                <span className="font-mono text-sm font-bold text-zinc-900">R$ {netCost.toFixed(2)} (- R$ {Math.round(netCost * qty)})</span>
               </div>
             </div>
           </div>
 
           {/* Card: Simulador Interativo */}
-          <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm relative overflow-hidden">
-            <div className="absolute top-0 left-0 h-1 w-full bg-emerald-500" />
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2 mb-4">
-              <RefreshCw className="h-4 w-4 text-emerald-500" /> Simulador de Cenários
+          <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-4 font-mono">
+              <RefreshCw className="h-4 w-4 text-zinc-500" /> SIMULADOR DE CENÁRIOS
             </h3>
             
             <div className="flex flex-col h-full justify-between pb-2">
               <div className="space-y-4">
                 <div className="flex justify-between items-baseline">
-                  <span className="text-slate-500 text-sm">Preço Simulado de BBDC4</span>
-                  <span className="text-2xl font-black text-slate-900 tracking-tight">R$ {simulatedPrice.toFixed(2)}</span>
+                  <span className="text-zinc-500 text-sm">Preço Simulado de BBDC4</span>
+                  <span className="text-2xl font-black text-zinc-900 tracking-tight font-mono">R$ {simulatedPrice.toFixed(2)}</span>
                 </div>
                 
                 {/* Input Slider */}
@@ -585,56 +619,55 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                   step="0.05"
                   value={simulatedPrice} 
                   onChange={(e) => setSimulatedPrice(parseFloat(e.target.value))}
-                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 focus:outline-none"
+                  className="w-full h-1.5 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-zinc-800 focus:outline-none"
                 />
                 
-                <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                <div className="flex justify-between text-[10px] text-zinc-400 font-mono">
                   <span>MÍN: R$ 14,50</span>
-                  <span className="text-indigo-600 font-bold">ENTRADA: R$ 17,80</span>
+                  <span className="text-zinc-650 font-bold">ENTRADA: R$ 17,80</span>
                   <span>MÁX: R$ 21,50</span>
                 </div>
               </div>
 
-              <div className="mt-6 p-4 rounded-lg bg-slate-50 border border-slate-100 space-y-3">
+              <div className="mt-6 p-4 rounded-lg bg-zinc-50 border border-zinc-100 space-y-3">
                 <div className="flex justify-between items-center text-xs">
-                  <span className="text-slate-500 font-medium">Valor Total da Carteira</span>
-                  <span className="font-bold text-slate-700">R$ {currentMetrics.totalVal.toLocaleString("pt-BR", {minimumFractionDigits: 2})}</span>
+                  <span className="text-zinc-500 font-medium">Valor Total da Carteira</span>
+                  <span className="font-bold text-zinc-700 font-mono">R$ {currentMetrics.totalVal.toLocaleString("pt-BR", {minimumFractionDigits: 2})}</span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
-                  <span className="text-slate-400 font-medium">Valor das Ações Puras</span>
-                  <span className="font-semibold text-slate-500">R$ {currentMetrics.stockVal.toLocaleString("pt-BR", {minimumFractionDigits: 2})}</span>
+                  <span className="text-zinc-400 font-medium">Valor das Ações Puras</span>
+                  <span className="font-semibold text-zinc-500 font-mono">R$ {currentMetrics.stockVal.toLocaleString("pt-BR", {minimumFractionDigits: 2})}</span>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Card: PnL Consolidado */}
-          <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm relative overflow-hidden">
-            <div className="absolute top-0 left-0 h-1 w-full bg-purple-500" />
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2 mb-4">
-              <DollarSign className="h-4 w-4 text-purple-500" /> Lucro / Prejuízo Estimado
+          <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-4 font-mono">
+              <DollarSign className="h-4 w-4 text-zinc-500" /> LUCRO / PREJUÍZO ATUAL
             </h3>
             
             <div className="space-y-6">
               <div>
-                <span className="text-slate-500 text-sm">Resultado Líquido do Collar</span>
-                <div className={`text-4xl font-black tracking-tight mt-1 flex items-baseline gap-2 ${currentMetrics.totalPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                <span className="text-zinc-500 text-sm">Resultado Líquido do Collar</span>
+                <div className={`text-3xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono ${currentMetrics.totalPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                   {currentMetrics.totalPL >= 0 ? "+" : ""}R$ {currentMetrics.totalPL.toLocaleString("pt-BR", {maximumFractionDigits: 0})}
-                  <span className="text-sm font-semibold">({currentMetrics.netReturnPercent >= 0 ? "+" : ""}{currentMetrics.netReturnPercent.toFixed(2)}%)</span>
+                  <span className="text-xs font-bold">({currentMetrics.netReturnPercent >= 0 ? "+" : ""}{currentMetrics.netReturnPercent.toFixed(2)}%)</span>
                 </div>
               </div>
 
-              <div className="p-4 rounded-lg bg-slate-50 border border-slate-100 space-y-3">
+              <div className="p-4 rounded-lg bg-zinc-50 border border-zinc-100 space-y-3">
                 <div className="flex justify-between items-center text-xs">
-                  <span className="text-slate-500 font-medium">Resultado Sem Hedge (Long)</span>
-                  <span className={`font-semibold ${currentMetrics.stockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                  <span className="text-zinc-500 font-medium">Resultado Sem Hedge (Long)</span>
+                  <span className={`font-semibold font-mono ${currentMetrics.stockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                     {currentMetrics.stockPL >= 0 ? "+" : ""}R$ {currentMetrics.stockPL.toLocaleString("pt-BR", {maximumFractionDigits: 0})} ({currentMetrics.unhedgedReturnPercent >= 0 ? "+" : ""}{currentMetrics.unhedgedReturnPercent.toFixed(2)}%)
                   </span>
                 </div>
                 
-                <div className="flex justify-between items-center text-xs pt-2 border-t border-slate-200">
-                  <span className="text-slate-500 font-medium">Assimetria Gerada pelo Collar</span>
-                  <span className={`font-bold ${currentMetrics.totalPL - currentMetrics.stockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                <div className="flex justify-between items-center text-xs pt-2 border-t border-zinc-200">
+                  <span className="text-zinc-500 font-medium">Assimetria Gerada pelo Collar</span>
+                  <span className={`font-bold font-mono ${currentMetrics.totalPL - currentMetrics.stockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                     {currentMetrics.totalPL - currentMetrics.stockPL >= 0 ? "+" : ""}R$ {Math.round(currentMetrics.totalPL - currentMetrics.stockPL).toLocaleString("pt-BR")}
                   </span>
                 </div>
@@ -643,64 +676,62 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
           </div>
 
         </div>
-
         {/* Monitor Quantitativo de Sinais */}
-        <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm mb-8">
-          <div className="flex items-center gap-2 mb-6 pb-4 border-b border-slate-100">
-            <Cpu className="h-5 w-5 text-indigo-600" />
+        <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs mb-8">
+          <div className="flex items-center gap-2 mb-6 pb-4 border-b border-zinc-100">
+            <Cpu className="h-4 w-4 text-zinc-500" />
             <div>
-              <h2 className="text-lg font-bold text-slate-900">Quant Decision Engine (Monitor KAMA & Fatores)</h2>
-              <p className="text-xs text-slate-400">Algoritmo de tomada de decisão para regimes de travas de hedge e crossovers adaptativos</p>
+              <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Quant Decision Engine (Monitor KAMA & Fatores)</h2>
+              <p className="text-xs text-zinc-400">Algoritmo de tomada de decisão para regimes de travas de hedge e crossovers adaptativos</p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
             {/* Coluna 1: Stance do Modelo */}
-            <div className="flex flex-col justify-between p-5 rounded-xl border border-slate-200 bg-slate-50 relative overflow-hidden">
-              <div className="absolute top-0 left-0 h-full w-1.5 bg-indigo-600" />
+            <div className="flex flex-col justify-between p-5 rounded-lg border border-zinc-200 bg-zinc-50 relative overflow-hidden">
               <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Diretriz do Modelo</span>
-                <div className="text-2xl font-black text-slate-900 mt-2 mb-3 tracking-tight flex items-center gap-2">
-                  <Radio className={`h-5 w-5 animate-pulse ${currentRegime === "A" ? "text-emerald-600" : "text-rose-600"}`} />
+                <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider font-mono">Diretriz do Modelo</span>
+                <div className="text-lg font-bold text-zinc-900 mt-2 mb-3 tracking-tight flex items-center gap-2 font-mono">
+                  <Radio className={`h-4 w-4 ${currentRegime === "A" ? "text-emerald-600" : "text-zinc-650"}`} />
                   {currentRegime === "A" ? "REGIME A: ALTA / ALFA" : "REGIME B: PROTEÇÃO / CAIXA"}
                 </div>
-                <p className="text-xs text-slate-500 leading-relaxed">
+                <p className="text-xs text-zinc-500 leading-relaxed">
                   {currentRegime === "A" 
                     ? `Preço de BBDC4 (R$ ${livePrice.toFixed(2)}) acima da KAMA (R$ ${currentKAMA.toFixed(2)}). O robô está em modo de maximização de alfa. Put desmontada (Proteção zerada) e Call curta rolada OTM para permitir participação na alta.`
                     : `Preço de BBDC4 (R$ ${livePrice.toFixed(2)}) abaixo da KAMA (R$ ${currentKAMA.toFixed(2)}). O robô está em modo de preservação de capital. Put ATM ativa (Delta ~-0.50) e Call vendida ATM para travar a carteira em Cash Sintético.`
                   }
                 </p>
               </div>
-              <div className="mt-4 pt-4 border-t border-slate-200 flex justify-between items-center text-[10px] text-slate-400 font-mono">
+              <div className="mt-4 pt-4 border-t border-zinc-200 flex justify-between items-center text-[10px] text-zinc-400 font-mono">
                 <span>Cálculo: Diário (Pós-Fechamento)</span>
                 <span>Data: {latestMetric.data}</span>
               </div>
             </div>
 
             {/* Coluna 2: Fatores de Risco */}
-            <div className="space-y-4 p-5 rounded-xl border border-slate-100 bg-white">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
-                <Activity className="h-3.5 w-3.5 text-slate-400" /> Fatores Quantitativos (KAMA + AQR Style)
+            <div className="space-y-4 p-5 rounded-lg border border-zinc-200 bg-white">
+              <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider flex items-center gap-1.5 font-mono">
+                <Activity className="h-3.5 w-3.5 text-zinc-400" /> Fatores Quantitativos (KAMA + AQR Style)
               </span>
               
               <div className="space-y-3 mt-2">
-                <div className="flex justify-between items-center py-1.5 border-b border-slate-50">
-                  <span className="text-xs text-slate-500">Média Adaptativa KAMA</span>
-                  <span className="font-mono text-xs font-bold text-slate-700">
+                <div className="flex justify-between items-center py-1.5 border-b border-zinc-50">
+                  <span className="text-xs text-zinc-500">Média Adaptativa KAMA</span>
+                  <span className="font-mono text-xs font-bold text-zinc-700">
                     R$ {currentKAMA.toFixed(2)}
                   </span>
                 </div>
 
-                <div className="flex justify-between items-center py-1.5 border-b border-slate-50">
-                  <span className="text-xs text-slate-500">Afastamento da KAMA</span>
+                <div className="flex justify-between items-center py-1.5 border-b border-zinc-50">
+                  <span className="text-xs text-zinc-500">Afastamento da KAMA</span>
                   <span className={`font-mono text-xs font-bold ${distToKama > 0 ? "text-emerald-600" : "text-rose-600"}`}>
                     {distToKama > 0 ? "+" : ""}{distToKama.toFixed(2)}%
                   </span>
                 </div>
 
-                <div className="flex justify-between items-center py-1.5 border-b border-slate-50">
-                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                <div className="flex justify-between items-center py-1.5 border-b border-zinc-50">
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-500">
                     {currentTSMOM < 0 ? <TrendingDown className="h-3.5 w-3.5 text-rose-500" /> : <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />}
                     Momentum Composto (TSMOM)
                   </div>
@@ -709,22 +740,22 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                   </span>
                 </div>
 
-                <div className="flex justify-between items-center py-1.5 border-b border-slate-50">
-                  <span className="text-xs text-slate-500">Volatilidade Histórica (HV 20d)</span>
-                  <span className="font-mono text-xs font-bold text-slate-700">
+                <div className="flex justify-between items-center py-1.5 border-b border-zinc-50">
+                  <span className="text-xs text-zinc-500">Volatilidade Histórica (HV 20d)</span>
+                  <span className="font-mono text-xs font-bold text-zinc-700">
                     {(currentHV * 100).toFixed(2)}%
                   </span>
                 </div>
 
-                <div className="flex justify-between items-center py-1.5 border-b border-slate-50">
-                  <span className="text-xs text-slate-500">Z-Score de Vol. (Regime)</span>
-                  <span className={`font-mono text-xs font-bold ${currentZScore > 0 ? "text-amber-600" : "text-slate-500"}`}>
+                <div className="flex justify-between items-center py-1.5 border-b border-zinc-50">
+                  <span className="text-xs text-zinc-500">Z-Score de Vol. (Regime)</span>
+                  <span className={`font-mono text-xs font-bold ${currentZScore > 0 ? "text-zinc-600" : "text-zinc-450"}`}>
                     {currentZScore > 0 ? "+" : ""}{currentZScore.toFixed(2)}
                   </span>
                 </div>
 
                 <div className="flex justify-between items-center py-1.5">
-                  <span className="text-xs text-slate-500">Vol. Risk Premium (VRP Puts)</span>
+                  <span className="text-xs text-zinc-500">Vol. Risk Premium (VRP Puts)</span>
                   <span className={`font-mono text-xs font-bold ${currentVRP < 0 ? "text-emerald-600" : "text-rose-600"}`}>
                     {currentVRP > 0 ? "+" : ""}{(currentVRP * 100).toFixed(2)}%
                   </span>
@@ -733,46 +764,43 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             </div>
 
             {/* Coluna 3: Gatilhos e Status */}
-            <div className="p-5 rounded-xl border border-slate-100 bg-white space-y-4">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+            <div className="p-5 rounded-lg border border-zinc-200 bg-white space-y-4">
+              <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider font-mono">
                 Status dos Gatilhos Operacionais
               </span>
 
               <div className="space-y-3.5 mt-2">
                 <div>
-                  <span className="text-[10px] text-slate-400 font-semibold block mb-1">GATILHOS KAMA</span>
+                  <span className="text-[10px] text-zinc-400 font-semibold block mb-1 font-mono">GATILHOS KAMA</span>
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-500">Tendência de Alta (Preço &gt; KAMA)</span>
-                      <span className={`flex items-center gap-1 font-semibold ${livePrice > currentKAMA ? "text-emerald-600" : "text-slate-400"}`}>
-                        {livePrice > currentKAMA ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <XCircle className="h-3.5 w-3.5 text-slate-300" />}
+                      <span className="text-zinc-500">Tendência de Alta (Preço &gt; KAMA)</span>
+                      <span className={`flex items-center gap-1 font-semibold ${livePrice > currentKAMA ? "text-emerald-600" : "text-zinc-400"}`}>
                         {livePrice > currentKAMA ? "Ativo (Regime A)" : "Inativo"}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-500">Tendência de Baixa (Preço &lt; KAMA)</span>
-                      <span className={`flex items-center gap-1 font-semibold ${livePrice < currentKAMA ? "text-rose-600" : "text-slate-400"}`}>
-                        {livePrice < currentKAMA ? <CheckCircle2 className="h-3.5 w-3.5 text-rose-500" /> : <XCircle className="h-3.5 w-3.5 text-slate-300" />}
+                      <span className="text-zinc-500">Tendência de Baixa (Preço &lt; KAMA)</span>
+                      <span className={`flex items-center gap-1 font-semibold ${livePrice < currentKAMA ? "text-rose-600" : "text-zinc-400"}`}>
                         {livePrice < currentKAMA ? "Ativo (Regime B)" : "Inativo"}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-slate-100">
-                  <span className="text-[10px] text-slate-400 font-semibold block mb-1">FATORES ADICIONAIS</span>
+                <div className="pt-2 border-t border-zinc-100">
+                  <span className="text-[10px] text-zinc-400 font-semibold block mb-1 font-mono">FATORES ADICIONAIS</span>
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-500">Reversão de Momentum (TSMOM &gt; 0)</span>
-                      <span className={`flex items-center gap-1 font-semibold ${currentTSMOM > 0 ? "text-emerald-600" : "text-slate-400"}`}>
-                        {currentTSMOM > 0 ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <XCircle className="h-3.5 w-3.5 text-slate-300" />}
+                      <span className="text-zinc-500">Reversão de Momentum (TSMOM &gt; 0)</span>
+                      <span className={`flex items-center gap-1 font-semibold ${currentTSMOM > 0 ? "text-emerald-600" : "text-zinc-400"}`}>
                         {currentTSMOM > 0 ? "Ativo" : "Inativo"}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-500">Vol Crush (IV Percentil &gt; 95%)</span>
-                      <span className="flex items-center gap-1 font-semibold text-slate-400">
-                        <XCircle className="h-3.5 w-3.5 text-slate-300" /> Inativo
+                      <span className="text-zinc-500">Vol Crush (IV Percentil &gt; 95%)</span>
+                      <span className="flex items-center gap-1 font-semibold text-zinc-400">
+                        Inativo
                       </span>
                     </div>
                   </div>
@@ -784,25 +812,25 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
         </section>
 
         {/* Monitor Real-Time de Volatilidade, Skew & Gregas */}
-        <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm mb-8">
-          <div className="flex items-center gap-2 mb-6 pb-4 border-b border-slate-100">
-            <Scale className="h-5 w-5 text-indigo-600" />
+        <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs mb-8">
+          <div className="flex items-center gap-2 mb-6 pb-4 border-b border-zinc-100">
+            <Scale className="h-4 w-4 text-zinc-500" />
             <div>
-              <h2 className="text-lg font-bold text-slate-900">Monitor Analítico & Sinais de Ajuste Collar (Cotação B3)</h2>
-              <p className="text-xs text-slate-400">Acompanhamento atômico dos limites operacionais de Skew da Superfície, Z-Score de IV e Delta Líquido com recomendações de compra/venda</p>
+              <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Monitor Analítico & Sinais de Ajuste Collar (Cotação B3)</h2>
+              <p className="text-xs text-zinc-400">Acompanhamento atômico dos limites operacionais de Skew da Superfície, Z-Score de IV e Delta Líquido com recomendações de compra/venda</p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
             {/* Tabela de Parâmetros Operacionais (ocupa 2 colunas) */}
-            <div className="lg:col-span-2 border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm flex flex-col justify-between">
-              <div className="p-4 bg-slate-50 border-b border-slate-200">
-                <span className="text-xs uppercase font-bold text-slate-500">Parâmetros Quantitativos de Cobertura</span>
+            <div className="lg:col-span-2 border border-zinc-200 rounded-lg overflow-hidden bg-white shadow-xs flex flex-col justify-between">
+              <div className="p-4 bg-zinc-50 border-b border-zinc-200">
+                <span className="text-[10px] uppercase font-bold text-zinc-500 font-mono">Parâmetros Quantitativos de Cobertura</span>
               </div>
               <div className="overflow-x-auto flex-1">
-                <table className="w-full text-sm text-left text-slate-500">
-                  <thead className="text-[10px] uppercase tracking-wider text-slate-400 bg-slate-50 border-b border-slate-200">
+                <table className="w-full text-sm text-left text-zinc-500">
+                  <thead className="text-[10px] uppercase tracking-wider text-zinc-400 bg-zinc-50 border-b border-zinc-200">
                     <tr>
                       <th scope="col" className="px-5 py-3 font-bold">Indicador</th>
                       <th scope="col" className="px-5 py-3 font-bold">Valor Atual</th>
@@ -810,80 +838,80 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                       <th scope="col" className="px-5 py-3 font-bold">Ação Esperada</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 font-sans">
+                  <tbody className="divide-y divide-zinc-100 font-sans">
                     
                     {/* Linha KAMA */}
-                    <tr className="hover:bg-slate-50">
+                    <tr className="hover:bg-zinc-50">
                       <td className="px-5 py-4">
-                        <div className="font-semibold text-slate-900">Média Adaptativa KAMA</div>
-                        <div className="text-[10px] text-slate-400">Média adaptativa de Kaufman (n=10) como rastreador de tendência</div>
+                        <div className="font-semibold text-zinc-900 text-xs uppercase tracking-wider font-mono">Média Adaptativa KAMA</div>
+                        <div className="text-[10px] text-zinc-400">Média adaptativa de Kaufman (n=10) como rastreador de tendência</div>
                       </td>
-                      <td className="px-5 py-4 font-mono font-bold text-slate-950">
-                        <span className={`px-2 py-0.5 rounded text-xs ${currentRegime === "A" ? "bg-emerald-100 text-emerald-700 font-extrabold" : "bg-rose-100 text-rose-700 font-extrabold"}`}>
+                      <td className="px-5 py-4 font-mono font-bold text-zinc-950">
+                        <span className={`px-2 py-0.5 rounded text-xs ${currentRegime === "A" ? "bg-emerald-50 text-emerald-700 font-extrabold" : "bg-rose-50 text-rose-700 font-extrabold"}`}>
                           R$ {currentKAMA.toFixed(2)} ({distToKama > 0 ? "+" : ""}{distToKama.toFixed(2)}%)
                         </span>
                       </td>
-                      <td className="px-5 py-4 font-semibold text-slate-700 font-mono text-xs">
+                      <td className="px-5 py-4 font-semibold text-zinc-700 font-mono text-xs">
                         Cruzamento Preço vs KAMA
                       </td>
-                      <td className="px-5 py-4 text-xs text-slate-600">
+                      <td className="px-5 py-4 text-xs text-zinc-650">
                         Alterna regimes de travas de proteção (Alfa vs Capital)
                       </td>
                     </tr>
 
                     {/* Linha Skew */}
-                    <tr className="hover:bg-slate-50">
+                    <tr className="hover:bg-zinc-50">
                       <td className="px-5 py-4">
-                        <div className="font-semibold text-slate-900">Skew da Superfície</div>
-                        <div className="text-[10px] text-slate-400">Diferença de IV entre Delta -0.375 e 0.131</div>
+                        <div className="font-semibold text-zinc-900 text-xs uppercase tracking-wider font-mono">Skew da Superfície</div>
+                        <div className="text-[10px] text-zinc-400">Diferença de IV entre Delta -0.375 e 0.131</div>
                       </td>
-                      <td className="px-5 py-4 font-mono font-bold text-slate-950">
-                        <span className={`px-2 py-0.5 rounded text-xs ${skewSuperficie > 5.0 ? "bg-indigo-100 text-indigo-700" : "bg-slate-100 text-slate-700"}`}>
+                      <td className="px-5 py-4 font-mono font-bold text-zinc-950">
+                        <span className={`px-2 py-0.5 rounded text-xs ${skewSuperficie > 5.0 ? "bg-zinc-100 text-zinc-800" : "bg-zinc-50 text-zinc-600"}`}>
                           {skewSuperficie.toFixed(2)}%
                         </span>
                       </td>
-                      <td className="px-5 py-4 font-semibold text-slate-700 font-mono text-xs">
+                      <td className="px-5 py-4 font-semibold text-zinc-700 font-mono text-xs">
                         &gt; +5.0%
                       </td>
-                      <td className="px-5 py-4 text-xs text-slate-600">
+                      <td className="px-5 py-4 text-xs text-zinc-650">
                         Rolling Down da Put (Ganha crédito no pânico)
                       </td>
                     </tr>
 
                     {/* Linha Z-Score IV */}
-                    <tr className="hover:bg-slate-50">
+                    <tr className="hover:bg-zinc-50">
                       <td className="px-5 py-4">
-                        <div className="font-semibold text-slate-900">Z-Score de IV (20d)</div>
-                        <div className="text-[10px] text-slate-400">Afastamento da Vol. Implícita das puts da média histórica</div>
+                        <div className="font-semibold text-zinc-900 text-xs uppercase tracking-wider font-mono">Z-Score de IV (20d)</div>
+                        <div className="text-[10px] text-zinc-400">Afastamento da Vol. Implícita das puts da média histórica</div>
                       </td>
-                      <td className="px-5 py-4 font-mono font-bold text-slate-950">
-                        <span className={`px-2 py-0.5 rounded text-xs ${ivZScore < -1.0 ? "bg-rose-100 text-rose-700 font-extrabold animate-pulse" : "bg-slate-100 text-slate-700"}`}>
+                      <td className="px-5 py-4 font-mono font-bold text-zinc-950">
+                        <span className={`px-2 py-0.5 rounded text-xs ${ivZScore < -1.0 ? "bg-rose-50 text-rose-700 font-extrabold font-mono" : "bg-zinc-50 text-zinc-600 font-mono"}`}>
                           {ivZScore.toFixed(2)}
                         </span>
                       </td>
-                      <td className="px-5 py-4 font-semibold text-slate-700 font-mono text-xs">
+                      <td className="px-5 py-4 font-semibold text-zinc-700 font-mono text-xs">
                         &lt; -1.0
                       </td>
-                      <td className="px-5 py-4 text-xs text-slate-600">
+                      <td className="px-5 py-4 text-xs text-zinc-650">
                         Desmontar Put (Evita perda por Vol Crush)
                       </td>
                     </tr>
 
                     {/* Linha Delta Líquido */}
-                    <tr className="hover:bg-slate-50">
+                    <tr className="hover:bg-zinc-50">
                       <td className="px-5 py-4">
-                        <div className="font-semibold text-slate-900">Delta Líquido (&Delta;<sub>net</sub>)</div>
-                        <div className="text-[10px] text-slate-400">Risco direcional consolidado da carteira collar</div>
+                        <div className="font-semibold text-zinc-900 text-xs uppercase tracking-wider font-mono">Delta Líquido (&Delta;<sub>net</sub>)</div>
+                        <div className="text-[10px] text-zinc-400">Risco direcional consolidado da carteira collar</div>
                       </td>
-                      <td className="px-5 py-4 font-mono font-bold text-slate-950">
-                        <span className={`px-2 py-0.5 rounded text-xs ${(netDeltaPerShare < 0.35 || netDeltaPerShare > 0.65) ? "bg-amber-100 text-amber-700 font-extrabold" : "bg-slate-100 text-slate-700"}`}>
+                      <td className="px-5 py-4 font-mono font-bold text-zinc-950">
+                        <span className={`px-2 py-0.5 rounded text-xs ${(netDeltaPerShare < 0.35 || netDeltaPerShare > 0.65) ? "bg-amber-50 text-amber-700 font-extrabold font-mono" : "bg-zinc-50 text-zinc-600 font-mono"}`}>
                           {netDeltaPerShare.toFixed(3)}
                         </span>
                       </td>
-                      <td className="px-5 py-4 font-semibold text-slate-700 font-mono text-xs">
+                      <td className="px-5 py-4 font-semibold text-zinc-700 font-mono text-xs">
                         &lt; 0.35 ou &gt; 0.65
                       </td>
-                      <td className="px-5 py-4 text-xs text-slate-600">
+                      <td className="px-5 py-4 text-xs text-zinc-650">
                         Ajustar Strikes (Rebalanceamento do Hedge Direcional)
                       </td>
                     </tr>
@@ -891,10 +919,11 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                   </tbody>
                 </table>
               </div>
-              <div className="p-3 bg-slate-50 border-t border-slate-100 text-[10px] text-slate-400 leading-relaxed text-center">
+              <div className="p-3 bg-zinc-50 border-t border-zinc-100 text-[10px] text-zinc-400 leading-relaxed text-center font-mono">
                 Métricas atualizadas automaticamente. Preço corrente de BBDC4: R$ {livePrice.toFixed(2)}.
               </div>
             </div>
+
 
             {/* Painel do Sinal Operacional (ocupa 1 coluna) */}
             <div className={`border rounded-xl overflow-hidden shadow-sm flex flex-col justify-between ${signalColorClass.split(" ")[0]} ${signalColorClass.split(" ")[1]}`}>
@@ -975,10 +1004,11 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                 {/* Rodapé */}
                 <div className="pt-2 border-t border-slate-200/60 flex justify-between items-center text-[10px] text-slate-400">
                   <span className="font-semibold text-slate-500">Δ Líquido: {totalNetDelta >= 0 ? "+" : ""}{Math.round(totalNetDelta)} ações ({(hedgeRatio).toFixed(1)}% hedgeado)</span>
-                  <span className="flex items-center gap-1 font-semibold text-emerald-600">
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
-                    B3 Live
+                  <span className="flex items-center gap-1 font-semibold text-emerald-600 font-mono text-[9px]">
+                    <span className={`w-1.5 h-1.5 rounded-full ${isFetchingQuotes ? "bg-amber-500 animate-pulse" : "bg-emerald-500 animate-ping"}`} />
+                    {isFetchingQuotes ? "ATUALIZANDO..." : "B3 LIVE"}
                   </span>
+
                 </div>
               </div>
             </div>
@@ -1085,28 +1115,28 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
         </section>
 
         {/* Tabela de Cenários */}
-        <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+        <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
           <div className="mb-6">
-            <h2 className="text-lg font-bold text-slate-900">Grade Completa de Cenários no Vencimento</h2>
-            <p className="text-xs text-slate-400">Mapeamento matemático dos retornos e valores das opções para diferentes preços de vencimento</p>
+            <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Grade Completa de Cenários no Vencimento</h2>
+            <p className="text-xs text-zinc-400">Mapeamento matemático dos retornos e valores das opções para diferentes preços de vencimento</p>
           </div>
           
           <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left text-slate-500">
-              <thead className="text-xs uppercase tracking-wider text-slate-400 bg-slate-50 border-b border-slate-200">
+            <table className="w-full text-sm text-left text-zinc-500">
+              <thead className="text-[10px] uppercase tracking-wider text-zinc-400 bg-zinc-50 border-b border-zinc-200">
                 <tr>
-                  <th scope="col" className="px-6 py-4 font-semibold">Preço do Ativo</th>
-                  <th scope="col" className="px-6 py-4 font-semibold">Valor das Ações</th>
-                  <th scope="col" className="px-6 py-4 font-semibold text-indigo-600">Valor com Hedge</th>
-                  <th scope="col" className="px-6 py-4 font-semibold text-slate-600">Resultado Ação Pura</th>
-                  <th scope="col" className="px-6 py-4 font-semibold text-emerald-600">PnL da PUT</th>
-                  <th scope="col" className="px-6 py-4 font-semibold text-amber-600">PnL da CALL</th>
-                  <th scope="col" className="px-6 py-4 font-semibold">Custo do Hedge</th>
-                  <th scope="col" className="px-6 py-4 font-semibold text-slate-900">Retorno Líquido Collar</th>
-                  <th scope="col" className="px-6 py-4 font-semibold">Resultado (%)</th>
+                  <th scope="col" className="px-6 py-4 font-bold">Preço do Ativo</th>
+                  <th scope="col" className="px-6 py-4 font-bold">Valor das Ações</th>
+                  <th scope="col" className="px-6 py-4 font-bold text-zinc-900">Valor com Hedge</th>
+                  <th scope="col" className="px-6 py-4 font-bold text-zinc-650">Resultado Ação Pura</th>
+                  <th scope="col" className="px-6 py-4 font-bold text-emerald-600">PnL da PUT</th>
+                  <th scope="col" className="px-6 py-4 font-bold text-rose-600">PnL da CALL</th>
+                  <th scope="col" className="px-6 py-4 font-bold">Custo do Hedge</th>
+                  <th scope="col" className="px-6 py-4 font-bold text-zinc-900">Retorno Líquido Collar</th>
+                  <th scope="col" className="px-6 py-4 font-bold">Resultado (%)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-zinc-150">
                 {fixedScenarios.map((price, idx) => {
                   const s = calculateScenario(price);
                   const isCurrent = Math.abs(simulatedPrice - price) < 0.05;
@@ -1114,43 +1144,43 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                   const isCallStrike = price === callStrike;
                   const isEntry = price === entryPrice;
 
-                  let rowBgClass = "hover:bg-slate-50";
+                  let rowBgClass = "hover:bg-zinc-50/50";
                   
                   if (isCurrent) {
-                    rowBgClass = "bg-purple-50 hover:bg-purple-100 border-l-4 border-purple-500 text-purple-900";
+                    rowBgClass = "bg-zinc-100 hover:bg-zinc-200/80 border-l-2 border-zinc-900 text-zinc-950 font-semibold";
                   } else if (isPutStrike) {
-                    rowBgClass = "bg-emerald-50 hover:bg-emerald-100 border-l-4 border-emerald-500 text-emerald-900";
+                    rowBgClass = "bg-zinc-50 hover:bg-zinc-100 border-l-2 border-zinc-500 text-zinc-800";
                   } else if (isCallStrike) {
-                    rowBgClass = "bg-amber-50 hover:bg-amber-100 border-l-4 border-amber-500 text-amber-900";
+                    rowBgClass = "bg-zinc-50 hover:bg-zinc-100 border-l-2 border-zinc-500 text-zinc-800";
                   } else if (isEntry) {
-                    rowBgClass = "bg-indigo-50 hover:bg-indigo-100 border-l-4 border-indigo-500 text-indigo-900";
+                    rowBgClass = "bg-zinc-50 hover:bg-zinc-100 border-l-2 border-zinc-500 text-zinc-800";
                   }
 
                   return (
                     <tr key={idx} className={`transition-colors duration-150 ${rowBgClass}`}>
-                      <td className="px-6 py-4 font-mono font-bold text-slate-900">
+                      <td className="px-6 py-4 font-mono font-bold text-zinc-900">
                         R$ {price.toFixed(2)}
-                        {isCurrent && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider bg-purple-100 text-purple-700">Simulado</span>}
-                        {isPutStrike && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider bg-emerald-100 text-emerald-700">Put Strike</span>}
-                        {isCallStrike && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider bg-amber-100 text-amber-700">Call Strike</span>}
-                        {isEntry && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider bg-indigo-100 text-indigo-700">Entrada</span>}
+                        {isCurrent && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider bg-zinc-200 text-zinc-700">Simulado</span>}
+                        {isPutStrike && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-650">Put Strike</span>}
+                        {isCallStrike && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-650">Call Strike</span>}
+                        {isEntry && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-650">Entrada</span>}
                       </td>
                       <td className="px-6 py-4 font-mono">
                         R$ {s.stockVal.toLocaleString("pt-BR", {minimumFractionDigits: 2})}
                       </td>
-                      <td className="px-6 py-4 font-mono font-semibold text-indigo-600">
+                      <td className="px-6 py-4 font-mono font-semibold text-zinc-800">
                         R$ {s.totalVal.toLocaleString("pt-BR", {minimumFractionDigits: 2})}
                       </td>
                       <td className={`px-6 py-4 font-mono font-semibold ${s.stockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                         {s.stockPL >= 0 ? "+" : ""}R$ {Math.round(s.stockPL).toLocaleString("pt-BR")} ({s.unhedgedReturnPercent >= 0 ? "+" : ""}{s.unhedgedReturnPercent.toFixed(2)}%)
                       </td>
-                      <td className={`px-6 py-4 font-mono font-medium ${s.putPL >= 0 ? "text-emerald-600" : "text-slate-400"}`}>
+                      <td className={`px-6 py-4 font-mono font-medium ${s.putPL >= 0 ? "text-emerald-600" : "text-zinc-400"}`}>
                         {s.putPL >= 0 ? "+" : ""}R$ {Math.round(s.putPL).toLocaleString("pt-BR")}
                       </td>
                       <td className={`px-6 py-4 font-mono font-medium ${s.callPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                         {s.callPL >= 0 ? "+" : ""}R$ {Math.round(s.callPL).toLocaleString("pt-BR")}
                       </td>
-                      <td className="px-6 py-4 font-mono text-slate-400">
+                      <td className="px-6 py-4 font-mono text-zinc-400">
                         -R$ {Math.round(netCost * qty)}
                       </td>
                       <td className={`px-6 py-4 font-mono font-bold ${s.totalPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
@@ -1172,7 +1202,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
       )}
       
       {/* Footer */}
-      <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-center text-xs text-slate-400 border-t border-slate-200 mt-12">
+      <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-center text-xs text-zinc-400 border-t border-zinc-200 mt-12 font-mono">
         <p>© 2026 Hedge Fund Quant Platform. Executado em modo Informativo / Read-Only.</p>
       </footer>
     </div>

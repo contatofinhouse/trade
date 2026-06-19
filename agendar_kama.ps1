@@ -1,5 +1,5 @@
 # agendar_kama.ps1
-# Registra o hedge_monitor.py como tarefa agendada: seg-sex 16h45 BRT
+# Registra o hedge_monitor.py como tarefa agendada: seg-sex 16h20 BRT
 # Execute como Administrador: powershell -ExecutionPolicy Bypass -File .\agendar_kama.ps1
 
 $TaskName   = "BBDC4_Hedge_KAMA_Monitor"
@@ -28,7 +28,7 @@ $Action = New-ScheduledTaskAction `
 $Trigger = New-ScheduledTaskTrigger `
     -Weekly `
     -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday `
-    -At "16:45"
+    -At "16:20"
 
 $Settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
@@ -40,7 +40,7 @@ Register-ScheduledTask `
     -Action $Action `
     -Trigger $Trigger `
     -Settings $Settings `
-    -Description "Robo BBDC4 Collar - KAMA diario seg-sex 16h45" `
+    -Description "Robo BBDC4 Collar - KAMA diario seg-sex 16h20" `
     -RunLevel Highest `
     -Force
 
