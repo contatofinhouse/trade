@@ -51,7 +51,7 @@ export default function LongShortWin({ initialState, livePriceFromClear }: LongS
   // Parâmetros Fixo de Risco de Hedge Fund
   const [capitalBase, setCapitalBase] = useState(100000); // Capital padrão de R$ 100.000
   const [maxRiskCash, setMaxRiskCash] = useState(1000); // Risco máximo de R$ 1.000 por trade
-  const [atrMultiplier, setAtrMultiplier] = useState(2.0); // Multiplicador padrão de 2.0x ATR para stops
+  const [atrMultiplier, setAtrMultiplier] = useState(1.0); // Multiplicador padrão de 1.0x ATR para stops mais justos
   
   // Preço do WIN atual
   const basePrice = livePriceFromClear || initialState.close_price || 120000;
@@ -304,17 +304,17 @@ export default function LongShortWin({ initialState, livePriceFromClear }: LongS
                 <label className="text-xs text-slate-400 block mb-1">Multiplicador do ATR (Stop)</label>
                 <input 
                   type="range" 
-                  min="1.0" 
-                  max="3.0" 
-                  step="0.5"
+                  min="0.3" 
+                  max="2.5" 
+                  step="0.1"
                   value={atrMultiplier} 
                   onChange={(e) => setAtrMultiplier(parseFloat(e.target.value))}
                   className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-purple-600 focus:outline-none"
                 />
                 <div className="flex justify-between text-[10px] text-slate-400 font-mono mt-1">
-                  <span>1.0x (Agressivo)</span>
-                  <span className="text-purple-600 font-bold">{atrMultiplier}x ATR</span>
-                  <span>3.0x (Conservador)</span>
+                  <span>0.3x (Curto)</span>
+                  <span className="text-purple-600 font-bold">{atrMultiplier.toFixed(1)}x ATR</span>
+                  <span>2.5x (Largo)</span>
                 </div>
               </div>
             </div>
