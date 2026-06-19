@@ -801,6 +801,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                 kalman_trend: "UP"
               }}
               livePriceFromClear={liveWinPrice}
+              winTicker={liveWinTicker}
             />
           </main>
         </div>
