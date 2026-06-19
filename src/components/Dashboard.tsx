@@ -642,14 +642,21 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   let signalNote = "";
   let needsAdjustment = false;
 
-  const isCrossoverAbove = currentRegime === "B" && livePrice > currentKAMA;
-  const isCrossoverBelow = currentRegime === "A" && livePrice < currentKAMA;
+  // Score Multifatorial para Decisão de Hedge BBDC4
+  const scoreKama = livePrice > currentKAMA ? 1 : -1;
+  const scoreTsmom = currentTSMOM > 0 ? 1 : -1;
+  const scoreVol = currentZScore <= 1.0 ? 1 : -1;
+  const scoreVrp = currentVRP >= 0 ? 1 : -1;
+  const totalScore = scoreKama + scoreTsmom + scoreVol + scoreVrp;
 
-  if (isCrossoverAbove) {
+  const isTransitionToA = currentRegime === "B" && totalScore >= 2;
+  const isTransitionToB = currentRegime === "A" && totalScore <= -2;
+
+  if (isTransitionToA) {
     needsAdjustment = true;
     signalTitle = "TRANSIÇÃO: ALTA (REGIME A)";
     signalAction = "Desmontar Put + Rolar Call para OTM";
-    signalNote = `Cruzamento UP — Preço R$ ${livePrice.toFixed(2)} ultrapassou KAMA R$ ${currentKAMA.toFixed(2)}. Reduzir proteção e aumentar exposição direcional.`;
+    signalNote = `Score Multifatorial atingiu +2 ou mais (Preço R$ ${livePrice.toFixed(2)} > KAMA R$ ${currentKAMA.toFixed(2)}, TSMOM: ${currentTSMOM.toFixed(4)}, Vol Z-Score: ${currentZScore.toFixed(2)}). Reduzir proteção e aumentar exposição direcional.`;
 
     const targetCallTicker = liveQuotes?.call_06?.ticker || "BBDCG200";
     const targetCallStrike = liveQuotes?.call_06?.strike || 20.00;
@@ -687,11 +694,11 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
       color: "red"
     });
 
-  } else if (isCrossoverBelow) {
+  } else if (isTransitionToB) {
     needsAdjustment = true;
     signalTitle = "TRANSIÇÃO: CAIXA (REGIME B)";
     signalAction = "Montar Put ATM + Rolar Call para ATM";
-    signalNote = `Cruzamento DOWN — Preço R$ ${livePrice.toFixed(2)} caiu abaixo da KAMA R$ ${currentKAMA.toFixed(2)}. Ativar proteção total da carteira.`;
+    signalNote = `Score Multifatorial caiu para -2 ou menos (Preço R$ ${livePrice.toFixed(2)} < KAMA R$ ${currentKAMA.toFixed(2)}, TSMOM: ${currentTSMOM.toFixed(4)}, Vol Z-Score: ${currentZScore.toFixed(2)}). Ativar proteção total da carteira.`;
 
     const targetPutTicker = liveQuotes?.put_50?.ticker || "BBDCS175";
     const targetPutStrike = liveQuotes?.put_50?.strike || 17.50;
@@ -731,10 +738,10 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   } else {
     if (currentRegime === "A") {
       signalTitle = "MANTER COLLAR: ALTA ATIVA (REGIME A)";
-      signalNote = `Preço atual (R$ ${livePrice.toFixed(2)}) sustentado acima da KAMA (R$ ${currentKAMA.toFixed(2)}). Nenhuma ordem pendente.`;
+      signalNote = `Preço atual (R$ ${livePrice.toFixed(2)}) e score multifatorial (${totalScore > 0 ? "+" : ""}${totalScore} pts) sustentam o regime de alta. Nenhuma ordem pendente.`;
     } else {
       signalTitle = "MANTER COLLAR: PROTEÇÃO ATIVA (REGIME B)";
-      signalNote = `Preço atual (R$ ${livePrice.toFixed(2)}) abaixo da KAMA (R$ ${currentKAMA.toFixed(2)}). Posição de proteção total mantida.`;
+      signalNote = `Preço atual (R$ ${livePrice.toFixed(2)}) e score multifatorial (${totalScore > 0 ? "+" : ""}${totalScore} pts) sustentam o regime de proteção. Posição de proteção total mantida.`;
     }
   }
 
@@ -963,13 +970,16 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             <div className="mb-4 pb-3 border-b border-zinc-150 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Recomendação Estratégica do Modelo</h2>
-                <p className="text-xs text-zinc-400">Ações recomendadas com base no regime de tendência KAMA</p>
+                <p className="text-xs text-zinc-400">Decisões de rebalanceamento baseadas no Score Multifatorial quantitativo</p>
               </div>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
-                needsAdjustment ? "bg-amber-100 text-amber-800 border border-amber-200 animate-pulse" : "bg-zinc-100 text-zinc-650 border border-zinc-200"
-              }`}>
-                {needsAdjustment ? "REAJUSTAR ESTRUTURA" : "ESTRUTURA OK"}
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-bold text-zinc-500 font-mono">Score: {totalScore > 0 ? "+" : ""}{totalScore} pts</span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
+                  needsAdjustment ? "bg-amber-100 text-amber-800 border border-amber-200 animate-pulse" : "bg-zinc-100 text-zinc-650 border border-zinc-200"
+                }`}>
+                  {needsAdjustment ? "REAJUSTAR ESTRUTURA" : "ESTRUTURA OK"}
+                </span>
+              </div>
             </div>
 
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -996,6 +1006,38 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                 ) : (
                   <span className="text-xs text-zinc-400 font-mono">Nenhum ajuste necessário no Home Broker no momento.</span>
                 )}
+              </div>
+            </div>
+
+            {/* Grid Detalhado do Score Multifatorial */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-zinc-150 text-xs font-mono">
+              <div className="p-3 rounded bg-zinc-50 border border-zinc-200 flex flex-col justify-between">
+                <span className="text-zinc-400 text-[10px] uppercase font-bold">1. KAMA Trend</span>
+                <span className="text-sm font-bold text-zinc-800 mt-1">{livePrice > currentKAMA ? "Alta (> KAMA)" : "Baixa (< KAMA)"}</span>
+                <span className={`text-xs font-bold mt-1 ${scoreKama > 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                  {scoreKama > 0 ? "+1 pt" : "-1 pt"}
+                </span>
+              </div>
+              <div className="p-3 rounded bg-zinc-50 border border-zinc-200 flex flex-col justify-between">
+                <span className="text-zinc-400 text-[10px] uppercase font-bold">2. TSMOM Composite</span>
+                <span className="text-sm font-bold text-zinc-800 mt-1">{currentTSMOM.toFixed(4)}</span>
+                <span className={`text-xs font-bold mt-1 ${scoreTsmom > 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                  {scoreTsmom > 0 ? "+1 pt" : "-1 pt"}
+                </span>
+              </div>
+              <div className="p-3 rounded bg-zinc-50 border border-zinc-200 flex flex-col justify-between">
+                <span className="text-zinc-400 text-[10px] uppercase font-bold">3. Vol Z-Score</span>
+                <span className="text-sm font-bold text-zinc-800 mt-1">{currentZScore.toFixed(2)}</span>
+                <span className={`text-xs font-bold mt-1 ${scoreVol > 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                  {scoreVol > 0 ? "+1 pt" : "-1 pt"}
+                </span>
+              </div>
+              <div className="p-3 rounded bg-zinc-50 border border-zinc-200 flex flex-col justify-between">
+                <span className="text-zinc-400 text-[10px] uppercase font-bold">4. VRP Puts</span>
+                <span className="text-sm font-bold text-zinc-800 mt-1">{(currentVRP * 100).toFixed(1)}%</span>
+                <span className={`text-xs font-bold mt-1 ${scoreVrp > 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                  {scoreVrp > 0 ? "+1 pt" : "-1 pt"}
+                </span>
               </div>
             </div>
           </section>

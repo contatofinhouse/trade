@@ -33,7 +33,7 @@ async function sendTelegramMessage(text: string): Promise<boolean> {
   }
 }
 
-function formatTelegramReport(indicators: any, collar: any, state: any): string {
+function formatTelegramReport(indicators: any, collar: any, state: any, scoreInfo?: any): string {
   const regimeStr = state.regime === "A" 
     ? "📈 <b>REGIME A (TENDÊNCIA DE ALTA)</b>" 
     : "📉 <b>REGIME B (PRESERVAÇÃO DE CAPITAL)</b>";
@@ -41,6 +41,9 @@ function formatTelegramReport(indicators: any, collar: any, state: any): string 
   let msg = `📊 <b>Relatório Diário de Hedge - BBDC4</b>\n`;
   msg += `Data de Cálculo: ${new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}\n`;
   msg += `Regime KAMA: ${regimeStr}\n`;
+  if (scoreInfo) {
+    msg += `Score Multifatorial: <b>${scoreInfo.totalScore > 0 ? "+" : ""}${scoreInfo.totalScore} pts</b> (KAMA: ${scoreInfo.scoreKama > 0 ? "+1" : "-1"} | TSMOM: ${scoreInfo.scoreTsmom > 0 ? "+1" : "-1"} | Vol: ${scoreInfo.scoreVol > 0 ? "+1" : "-1"} | VRP: ${scoreInfo.scoreVrp > 0 ? "+1" : "-1"})\n`;
+  }
   msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
   msg += `💵 Preço de Fechamento: R$ ${indicators.close_price.toFixed(2)}\n`;
   msg += `📊 Média Adaptativa KAMA: R$ ${indicators.kama.toFixed(2)} (${indicators.close_price > indicators.kama ? "Preço > KAMA" : "Preço < KAMA"})\n`;
@@ -83,8 +86,8 @@ function formatTelegramAlert(
   let msg = "";
   
   if (alertType === "KAMA_CROSS_ABOVE") {
-    msg += `📈 <b>ALERTA KAMA: TENDÊNCIA DE ALTA (REGIME A)</b> 📈\n\n`;
-    msg += `O preço de BBDC4 (R$ ${extra.price.toFixed(2)}) cruzou para <b>CIMA</b> da média adaptativa KAMA (R$ ${extra.kama.toFixed(2)}).\n\n`;
+    msg += `📈 <b>ALERTA HEDGE: TRANSIÇÃO PARA ALTA (REGIME A)</b> 📈\n\n`;
+    msg += `${reason}\n\n`;
     msg += `<b>Ações Operacionais de Execução (Maximizar Alfa):</b>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     if (state.active_put_ticker) {
@@ -102,8 +105,8 @@ function formatTelegramAlert(
     msg += `⚠️ <i>Execute manualmente via Home Broker. Esta operação eleva o Delta Líquido para ~0.94 para capturar alta.</i>`;
     
   } else if (alertType === "KAMA_CROSS_BELOW") {
-    msg += `📉 <b>ALERTA KAMA: PROTEÇÃO TOTAL / CAIXA (REGIME B)</b> 📉\n\n`;
-    msg += `O preço de BBDC4 (R$ ${extra.price.toFixed(2)}) cruzou para <b>BAIXO</b> da média adaptativa KAMA (R$ ${extra.kama.toFixed(2)}).\n\n`;
+    msg += `📉 <b>ALERTA HEDGE: TRANSIÇÃO PARA PROTEÇÃO (REGIME B)</b> 📉\n\n`;
+    msg += `${reason}\n\n`;
     msg += `<b>Ações Operacionais de Execução (Preservar Capital):</b>\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     msg += `🟢 <b>COMPRAR PUT ATM (Delta ~-0.50):</b>\n`;
@@ -198,16 +201,33 @@ export async function GET(request: Request) {
     // Skew da Superfície (com fallback se nulo)
     const currentSkew = activeQuotes.skew || (collar.best_put && collar.best_call ? (collar.best_put.iv - collar.best_call.iv) * 100 : 3.40);
 
-    // 6. Inicializa o Regime KAMA se não estiver definido
+    // 6. Inicializa o Regime KAMA e o Score Multifatorial se não estiver definido
+    const scoreKama = currentPrice > indicators.kama ? 1 : -1;
+    const scoreTsmom = tsmom > 0 ? 1 : -1;
+    const scoreVol = volZScore <= 1.0 ? 1 : -1;
+    const scoreVrp = vrpPut >= 0 ? 1 : -1;
+    const totalScore = scoreKama + scoreTsmom + scoreVol + scoreVrp;
+
+    const scoreInfo = {
+      scoreKama,
+      scoreTsmom,
+      scoreVol,
+      scoreVrp,
+      totalScore
+    };
+
     if (!state.regime) {
-      state.regime = currentPrice > indicators.kama ? "A" : "B";
+      state.regime = totalScore >= 0 ? "A" : "B";
       await saveHedgeState(state);
     }
     const currentRegime = state.regime;
 
-    // 7. Lógica de Crossover KAMA e Transição de Regimes
-    if (currentRegime === "B" && currentPrice > indicators.kama) {
-      const reason = `Preço cruzou para CIMA da média KAMA (Preço: R$ ${currentPrice.toFixed(2)} > KAMA: R$ ${indicators.kama.toFixed(2)}).`;
+    // 7. Lógica de Transição por Score Multifatorial
+    const isTransitionToA = currentRegime === "B" && totalScore >= 2;
+    const isTransitionToB = currentRegime === "A" && totalScore <= -2;
+
+    if (isTransitionToA) {
+      const reason = `Score Multifatorial atingiu <b>+2</b> ou mais (${totalScore > 0 ? "+" : ""}${totalScore} pts) indicando viés de alta consistente.\n(Preço R$ ${currentPrice.toFixed(2)} > KAMA R$ ${indicators.kama.toFixed(2)}, TSMOM: ${tsmom.toFixed(4)}, Vol Z-Score: ${volZScore.toFixed(2)}, VRP: ${(vrpPut*100).toFixed(1)}%).`;
       const targetCall = activeQuotes.call_06 || { ticker: "BBDCG200", strike: 20.00, price: 0.02, delta: 0.065 };
       const extraData = {
         price: currentPrice,
@@ -239,8 +259,8 @@ export async function GET(request: Request) {
         await saveHedgeState(state);
         alertTriggered = true;
       }
-    } else if (currentRegime === "A" && currentPrice < indicators.kama) {
-      const reason = `Preço cruzou para BAIXO da média KAMA (Preço: R$ ${currentPrice.toFixed(2)} < KAMA: R$ ${indicators.kama.toFixed(2)}).`;
+    } else if (isTransitionToB) {
+      const reason = `Score Multifatorial caiu para <b>-2</b> ou menos (${totalScore} pts) exigindo proteção integral.\n(Preço R$ ${currentPrice.toFixed(2)} < KAMA R$ ${indicators.kama.toFixed(2)}, TSMOM: ${tsmom.toFixed(4)}, Vol Z-Score: ${volZScore.toFixed(2)}, VRP: ${(vrpPut*100).toFixed(1)}%).`;
       const targetPut = activeQuotes.put_50 || { ticker: "BBDCS175", strike: 17.50, price: 0.45, delta: -0.50 };
       const targetCall = activeQuotes.call_50 || { ticker: "BBDCG175", strike: 17.50, price: 0.45, delta: 0.50 };
       const extraData = {
@@ -277,7 +297,7 @@ export async function GET(request: Request) {
 
     // 8. Envia Relatório Diário se nenhum Alerta Crítico foi acionado
     if (!alertTriggered) {
-      const reportText = formatTelegramReport(indicators, collar, state);
+      const reportText = formatTelegramReport(indicators, collar, state, scoreInfo);
       await sendTelegramMessage(reportText);
     }
 

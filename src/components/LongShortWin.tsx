@@ -188,6 +188,62 @@ export default function LongShortWin({ initialState, livePriceFromClear, winTick
 
       </div>
 
+      {/* Card de Recomendação Estratégica */}
+      <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
+        <div className="mb-4 pb-3 border-b border-zinc-150 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Recomendação Estratégica do Modelo (WIN)</h2>
+            <p className="text-xs text-zinc-400">Direcionamento operacional com base no alinhamento de KAMA, RSI e Kalman</p>
+          </div>
+          <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
+            decision !== "CAIXA" ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-zinc-100 text-zinc-650 border border-zinc-200"
+          }`}>
+            {decision !== "CAIXA" ? "REBALANCEAR / ENTRAR" : "MANTER NEUTRO"}
+          </span>
+        </div>
+
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="flex-1">
+            <span className="text-xs text-zinc-500 font-medium">Direcionamento Estratégico</span>
+            <h4 className="text-lg font-bold text-zinc-900 font-mono mt-0.5">
+              {decision === "COMPRA" ? "INICIAR POSIÇÃO COMPRADA (LONG)" : decision === "VENDA" ? "INICIAR POSIÇÃO VENDIDA (SHORT)" : "NEUTRO / AGUARDAR FORA DO MERCADO"}
+            </h4>
+            <p className="text-xs text-zinc-650 mt-1 leading-relaxed">
+              {decision === "COMPRA" 
+                ? `Alinhamento altista detectado com score de ${totalScore > 0 ? "+" : ""}${totalScore} pts. Entrar comprado em WIN a mercado.` 
+                : decision === "VENDA"
+                ? `Alinhamento baixista detectado com score de ${totalScore} pts. Entrar vendido em WIN a mercado.`
+                : blockReason || "Sinais quantitativos divergentes. Aguardar alinhamento para evitar falsos rompimentos."}
+            </p>
+          </div>
+
+          <div className="flex-shrink-0 md:w-80 p-4 rounded-lg bg-zinc-50 border border-zinc-200">
+            <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider font-mono block mb-2">Operações sugeridas</span>
+            {decision !== "CAIXA" ? (
+              <ul className="space-y-2 font-mono text-xs">
+                <li className="flex items-center justify-between gap-2 border-b border-zinc-150 pb-1.5 last:border-b-0 last:pb-0">
+                  <span className={`font-bold ${decision === "COMPRA" ? "text-emerald-600" : "text-rose-600"}`}>
+                    {decision === "COMPRA" ? "COMPRA" : "VENDA"}
+                  </span>
+                  <span className="font-bold text-zinc-900">{winTicker}</span>
+                  <span className="text-zinc-500">{contractsSize} Contratos</span>
+                </li>
+                <li className="flex items-center justify-between gap-2 border-b border-zinc-150 pb-1.5 last:border-b-0 last:pb-0">
+                  <span className="text-zinc-400">STOP LOSS:</span>
+                  <span className="text-rose-600 font-bold">{stopLoss.toLocaleString("pt-BR")} pts</span>
+                </li>
+                <li className="flex items-center justify-between gap-2 border-b border-zinc-150 pb-1.5 last:border-b-0 last:pb-0">
+                  <span className="text-zinc-400">ALVO (TP):</span>
+                  <span className="text-emerald-600 font-bold">{targetProfit.toLocaleString("pt-BR")} pts</span>
+                </li>
+              </ul>
+            ) : (
+              <span className="text-xs text-zinc-400 font-mono">Nenhum ajuste ou entrada necessária no momento.</span>
+            )}
+          </div>
+        </div>
+      </section>
+
       {/* Tabela de Posicionamento Unificada */}
       <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
         <div className="mb-6 pb-3 border-b border-zinc-150 flex items-center justify-between">
