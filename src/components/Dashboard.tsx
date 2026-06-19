@@ -185,6 +185,10 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   let callTicker: string | null = state.active_call_ticker;
   let callStrike: number | null = state.active_call_strike;
   let isHedgeActive = state.hedge_active;
+  let putQty = state.active_put_ticker ? qty : 0;
+  let callQty = state.active_call_ticker ? qty : 0;
+  let custodyPutItem: any = null;
+  let custodyCallItem: any = null;
 
   if (liveCustody && liveCustody.length > 0) {
     const custodyBbdc4 = liveCustody.find((item: any) => item.ticker === "BBDC4");
@@ -193,32 +197,50 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
       entryPrice = custodyBbdc4.averageCost || entryPrice;
     }
 
-    // Busca Put ativa na custódia
-    const custodyPut = liveCustody.find((item: any) => 
+    // Busca Put na custódia (preferindo ativa, mas aceitando zerada)
+    custodyPutItem = liveCustody.find((item: any) => 
       item.ticker.startsWith("BBDC") && 
       (item.ticker.includes("S") || item.ticker.includes("T") || item.ticker.includes("U") || item.ticker.includes("V") || item.ticker.includes("W") || item.ticker.includes("X") || item.ticker.includes("Y")) &&
       (Math.abs(item.availableQuantity || 0) > 0 || Math.abs(item.collateralBlockedQuantity || 0) > 0)
     );
-    if (custodyPut) {
-      putTicker = custodyPut.ticker;
-      isHedgeActive = true;
+    if (!custodyPutItem) {
+      custodyPutItem = liveCustody.find((item: any) => 
+        item.ticker.startsWith("BBDC") && 
+        (item.ticker.includes("S") || item.ticker.includes("T") || item.ticker.includes("U") || item.ticker.includes("V") || item.ticker.includes("W") || item.ticker.includes("X") || item.ticker.includes("Y"))
+      );
+    }
+
+    if (custodyPutItem) {
+      putTicker = custodyPutItem.ticker;
+      putQty = (custodyPutItem.availableQuantity || 0) + (custodyPutItem.collateralBlockedQuantity || 0);
+      isHedgeActive = putQty > 0;
     } else {
       putTicker = null;
       putStrike = null;
+      putQty = 0;
       isHedgeActive = false;
     }
 
-    // Busca Call ativa na custódia
-    const custodyCall = liveCustody.find((item: any) => 
+    // Busca Call na custódia (preferindo ativa, mas aceitando zerada)
+    custodyCallItem = liveCustody.find((item: any) => 
       item.ticker.startsWith("BBDC") && 
       (item.ticker.includes("G") || item.ticker.includes("H") || item.ticker.includes("I") || item.ticker.includes("J") || item.ticker.includes("K") || item.ticker.includes("L") || item.ticker.includes("A") || item.ticker.includes("B") || item.ticker.includes("C") || item.ticker.includes("D") || item.ticker.includes("E") || item.ticker.includes("F")) &&
       (Math.abs(item.availableQuantity || 0) > 0 || Math.abs(item.collateralBlockedQuantity || 0) > 0)
     );
-    if (custodyCall) {
-      callTicker = custodyCall.ticker;
+    if (!custodyCallItem) {
+      custodyCallItem = liveCustody.find((item: any) => 
+        item.ticker.startsWith("BBDC") && 
+        (item.ticker.includes("G") || item.ticker.includes("H") || item.ticker.includes("I") || item.ticker.includes("J") || item.ticker.includes("K") || item.ticker.includes("L") || item.ticker.includes("A") || item.ticker.includes("B") || item.ticker.includes("C") || item.ticker.includes("D") || item.ticker.includes("E") || item.ticker.includes("F"))
+      );
+    }
+
+    if (custodyCallItem) {
+      callTicker = custodyCallItem.ticker;
+      callQty = (custodyCallItem.availableQuantity || 0) + (custodyCallItem.collateralBlockedQuantity || 0);
     } else {
       callTicker = null;
       callStrike = null;
+      callQty = 0;
     }
   }
 
@@ -295,24 +317,36 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   // Cálculo de Skew do Smile (Put IV - Call IV)
   const smileSkew = ((putQuote?.iv || 0.247) - (callQuote ? callQuote.iv : 0.213)) * 100;
 
-  // Cálculo do PnL Real-Time Atual (preços marcados a mercado)
-  const currentPutVal = putQuote ? (putQuote.price * qty) : 0.0;
-  const currentCallVal = callQuote ? (callQuote.price * qty) : 0.0;
-  
-  const initialPutVal = putTicker ? (putCost * qty) : 0.0;
-  const initialCallVal = callTicker ? (callIncome * qty) : 0.0;
+  // Cálculo do PnL Real-Time Atual (preços marcados a mercado e realizados)
+  let currentPutPL = 0;
+  if (putTicker) {
+    if (putQty > 0) {
+      const currentPutVal = putQuote ? (putQuote.price * putQty) : 0.0;
+      const initialPutVal = putCost * putQty;
+      currentPutPL = currentPutVal - initialPutVal;
+    } else if (custodyPutItem && custodyPutItem.averageCost > 0) {
+      currentPutPL = (custodyPutItem.averageCost - putCost) * qty;
+    }
+  }
 
-  const currentPutPL = (isHedgeActive && putTicker) ? (currentPutVal - initialPutVal) : 0;
-  const currentCallPL = isHedgeActive ? (initialCallVal - currentCallVal) : 0; // Venda de call: ganha se o preço cai
+  let currentCallPL = 0;
+  if (callTicker) {
+    if (callQty > 0) {
+      const currentCallVal = callQuote ? (callQuote.price * callQty) : 0.0;
+      const initialCallVal = callIncome * callQty;
+      currentCallPL = initialCallVal - currentCallVal;
+    } else if (custodyCallItem && custodyCallItem.averageCost > 0) {
+      currentCallPL = (callIncome - custodyCallItem.averageCost) * qty;
+    }
+  }
   
   const currentStockPL = (simulatedPrice - entryPrice) * qty;
-
-  const currentTotalPL = currentStockPL + currentPutPL + currentCallPL;
-  const currentReturnPercent = (currentTotalPL / (entryPrice * qty)) * 100;
 
   // Preços e Resultados Real-Time baseados no preço atual real (não simulado)
   const liveStockPL = (livePrice - entryPrice) * qty;
   const liveTotalPL = liveStockPL + currentPutPL + currentCallPL;
+  const liveReturnPercent = (liveTotalPL / (entryPrice * qty)) * 100;
+  const liveStockReturnPercent = (liveStockPL / (entryPrice * qty)) * 100;
 
   // Z-Score da Volatilidade Implícita das Puts (Z-Score de IV 20d)
   const calculateIVZScore = (hist: any[], currentIV: number) => {
@@ -453,18 +487,35 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   // Calculadora de Cenários
   const calculateScenario = (price: number) => {
     const stockPL = (price - entryPrice) * qty;
-    const putPL = putTicker 
-      ? (Math.max(0, (putStrike || 0) - price) - putCost) * qty
-      : 0.0;
-    const callPL = callTicker 
-      ? (callIncome - Math.max(0, price - (callStrike || 0))) * qty
-      : 0.0;
+    
+    // Put PL
+    let putPL = 0;
+    if (putTicker) {
+      if (putQty > 0) {
+        putPL = (Math.max(0, (putStrike || 0) - price) - putCost) * putQty;
+      } else if (custodyPutItem && custodyPutItem.averageCost > 0) {
+        putPL = (custodyPutItem.averageCost - putCost) * qty;
+      }
+    }
+
+    // Call PL
+    let callPL = 0;
+    if (callTicker) {
+      if (callQty > 0) {
+        callPL = (callIncome - Math.max(0, price - (callStrike || 0))) * callQty;
+      } else if (custodyCallItem && custodyCallItem.averageCost > 0) {
+        callPL = (callIncome - custodyCallItem.averageCost) * qty;
+      }
+    }
+
     const optionsPL = putPL + callPL;
     const totalPL = stockPL + optionsPL;
     
     const stockVal = price * qty;
-    const optionsVal = ((putTicker ? Math.max(0, (putStrike || 0) - price) : 0.0) 
-      - (callTicker ? Math.max(0, price - (callStrike || 0)) : 0.0)) * qty;
+    const optionsVal = (
+      (putTicker && putQty > 0 ? Math.max(0, (putStrike || 0) - price) : 0.0) - 
+      (callTicker && callQty > 0 ? Math.max(0, price - (callStrike || 0)) : 0.0)
+    ) * qty;
     const totalVal = stockVal + optionsVal;
     
     const netReturnPercent = (totalPL / (entryPrice * qty)) * 100;
@@ -751,24 +802,24 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             <div className="space-y-6">
               <div>
                 <span className="text-zinc-500 text-sm">Resultado Líquido do Collar</span>
-                <div className={`text-3xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono ${currentMetrics.totalPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                  {currentMetrics.totalPL >= 0 ? "+" : ""}R$ {currentMetrics.totalPL.toLocaleString("pt-BR", {maximumFractionDigits: 0})}
-                  <span className="text-xs font-bold">({currentMetrics.netReturnPercent >= 0 ? "+" : ""}{currentMetrics.netReturnPercent.toFixed(2)}%)</span>
+                <div className={`text-3xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono ${liveTotalPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                  {liveTotalPL >= 0 ? "+" : ""}R$ {liveTotalPL.toLocaleString("pt-BR", {maximumFractionDigits: 0})}
+                  <span className="text-xs font-bold">({liveReturnPercent >= 0 ? "+" : ""}{liveReturnPercent.toFixed(2)}%)</span>
                 </div>
               </div>
 
               <div className="p-4 rounded-lg bg-zinc-50 border border-zinc-100 space-y-3">
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-zinc-500 font-medium">Resultado Sem Hedge (Long)</span>
-                  <span className={`font-semibold font-mono ${currentMetrics.stockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                    {currentMetrics.stockPL >= 0 ? "+" : ""}R$ {currentMetrics.stockPL.toLocaleString("pt-BR", {maximumFractionDigits: 0})} ({currentMetrics.unhedgedReturnPercent >= 0 ? "+" : ""}{currentMetrics.unhedgedReturnPercent.toFixed(2)}%)
+                  <span className={`font-semibold font-mono ${liveStockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                    {liveStockPL >= 0 ? "+" : ""}R$ {liveStockPL.toLocaleString("pt-BR", {maximumFractionDigits: 0})} ({liveStockReturnPercent >= 0 ? "+" : ""}{liveStockReturnPercent.toFixed(2)}%)
                   </span>
                 </div>
                 
                 <div className="flex justify-between items-center text-xs pt-2 border-t border-zinc-200">
                   <span className="text-zinc-500 font-medium">Assimetria Gerada pelo Collar</span>
-                  <span className={`font-bold font-mono ${currentMetrics.totalPL - currentMetrics.stockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                    {currentMetrics.totalPL - currentMetrics.stockPL >= 0 ? "+" : ""}R$ {Math.round(currentMetrics.totalPL - currentMetrics.stockPL).toLocaleString("pt-BR")}
+                  <span className={`font-bold font-mono ${liveTotalPL - liveStockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                    {liveTotalPL - liveStockPL >= 0 ? "+" : ""}R$ {Math.round(liveTotalPL - liveStockPL).toLocaleString("pt-BR")}
                   </span>
                 </div>
               </div>
