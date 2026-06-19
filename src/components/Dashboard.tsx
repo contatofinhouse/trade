@@ -637,6 +637,47 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   // 2. Opções da Custódia
   positionItems.push(...optionsInCustody);
 
+  // Encontra os strikes ativos na custódia
+  const activePut = optionsInCustody.find((o: any) => o.type.includes("PUT") && o.qty > 0);
+  const activeCall = optionsInCustody.find((o: any) => o.type.includes("CALL") && o.qty > 0);
+  
+  const activePutStrike = activePut ? (activePut.ticker === "BBDCS167" ? 16.89 : activePut.ticker === "BBDCS2" ? 17.39 : (state.active_put_strike || 17.39)) : null;
+  const activeCallStrike = activeCall ? (activeCall.ticker === "BBDCG194" ? 19.14 : (state.active_call_strike || 19.14)) : null;
+
+  const calculateDynamicScenario = (price: number) => {
+    const stockPL = (price - entryPrice) * qty;
+    let optionsPL = 0;
+
+    optionsInCustody.forEach((opt: any) => {
+      const type = opt.type.includes("PUT") ? "PUT" : "CALL";
+      const isClosed = opt.qty === 0;
+      const strike = opt.ticker === state.active_put_ticker ? (state.active_put_strike || 17.39)
+                   : opt.ticker === state.active_call_ticker ? (state.active_call_strike || 19.14)
+                   : opt.ticker === "BBDCS2" ? 17.39
+                   : opt.ticker === "BBDCG194" ? 19.14
+                   : opt.ticker === "BBDCS167" ? 16.89
+                   : parseFloat(opt.ticker.replace(/\D/g, '')) / 100 || entryPrice;
+
+      if (type === "PUT") {
+        if (!isClosed) {
+          optionsPL += (Math.max(0, strike - price) - opt.avgPrice) * opt.qty;
+        } else {
+          optionsPL += opt.pnl;
+        }
+      } else {
+        if (!isClosed) {
+          optionsPL += (opt.avgPrice - Math.max(0, price - strike)) * opt.qty;
+        } else {
+          optionsPL += opt.pnl;
+        }
+      }
+    });
+
+    const totalPL = stockPL + optionsPL;
+    const netReturnPercent = (totalPL / (entryPrice * qty)) * 100;
+    return { totalPL, netReturnPercent };
+  };
+
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans antialiased selection:bg-zinc-200">
       
@@ -795,6 +836,65 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
               </div>
             </div>
 
+          </div>
+
+          {/* Quadro de Cenários Limites */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            {/* Card Pior Cenário */}
+            <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs flex flex-col justify-between">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-rose-500 flex items-center gap-2 mb-3 font-mono">
+                  <TrendingDown className="h-4 w-4 text-rose-500" /> PIOR CENÁRIO (PROTEÇÃO DE BAIXA)
+                </h3>
+                {activePutStrike ? (
+                  <>
+                    <span className="text-zinc-500 text-xs font-medium">Preço Limitado pela Put ativa em R$ {activePutStrike.toFixed(2)}</span>
+                    <div className="text-2xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono text-rose-600">
+                      R$ {calculateDynamicScenario(activePutStrike).totalPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}
+                      <span className="text-xs font-bold">({calculateDynamicScenario(activePutStrike).netReturnPercent.toFixed(2)}%)</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-zinc-500 text-xs font-medium">Hedge Inativo (Sem Put de proteção ativa)</span>
+                    <div className="text-2xl font-black tracking-tight mt-1 font-mono text-rose-600">
+                      Risco de Baixa Ilimitado
+                    </div>
+                  </>
+                )}
+              </div>
+              <p className="text-[10px] text-zinc-400 mt-4 border-t border-zinc-150 pt-3">
+                O pior resultado possível da estrutura de Collar consolidada, travado pelo strike de proteção da Put.
+              </p>
+            </div>
+
+            {/* Card Melhor Cenário */}
+            <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs flex flex-col justify-between">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-600 flex items-center gap-2 mb-3 font-mono">
+                  <TrendingUp className="h-4 w-4 text-emerald-600" /> MELHOR CENÁRIO (RETORNO MÁXIMO CAPPED)
+                </h3>
+                {activeCallStrike ? (
+                  <>
+                    <span className="text-zinc-500 text-xs font-medium">Lucro Limitado pela Call vendida em R$ {activeCallStrike.toFixed(2)}</span>
+                    <div className="text-2xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono text-emerald-600">
+                      +R$ {calculateDynamicScenario(activeCallStrike).totalPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}
+                      <span className="text-xs font-bold">(+{calculateDynamicScenario(activeCallStrike).netReturnPercent.toFixed(2)}%)</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-zinc-500 text-xs font-medium">Hedge de Alta Inativo (Sem Call vendida ativa)</span>
+                    <div className="text-2xl font-black tracking-tight mt-1 font-mono text-emerald-600">
+                      Alta Ilimitada
+                    </div>
+                  </>
+                )}
+              </div>
+              <p className="text-[10px] text-zinc-400 mt-4 border-t border-zinc-150 pt-3">
+                O retorno máximo possível da estrutura consolidada, limitado/travado pelo strike da Call vendida.
+              </p>
+            </div>
           </div>
 
           {/* Tabela de Custódia Unificada */}
