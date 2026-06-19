@@ -515,117 +515,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
       ? (liveQuotes.put_375.iv - liveQuotes.call_131.iv) * 100
       : smileSkew);
 
-  // ────────────────────────────────────────────────
-  // Lógica de Sinais Operacionais — Ordens de Home Broker
-  // ────────────────────────────────────────────────
-  interface OrderLeg {
-    action: "COMPRA" | "VENDA";
-    ticker: string;
-    qty: number;
-    strike: number;
-    nature: string; // ex: "Desmontar Put" / "Rolar Call OTM"
-    color: "green" | "red" | "blue" | "amber";
-  }
 
-  let signalTitle = "MANTER CARREGAMENTO";
-  let signalColorClass = "border-zinc-200 bg-zinc-50 text-zinc-900 bg-zinc-900";
-  let signalAction = "Manter Estrutura Atual";
-  let orderLegs: OrderLeg[] = [];
-  let signalNote = "";
-
-  // Verifica se há cruzamento pendente no preço live vs KAMA
-  const isCrossoverAbove = currentRegime === "B" && livePrice > currentKAMA;
-  const isCrossoverBelow = currentRegime === "A" && livePrice < currentKAMA;
-
-  if (isCrossoverAbove) {
-    signalTitle = "TRANSIÇÃO: ALTA (REGIME A)";
-    signalColorClass = "border-zinc-200 bg-zinc-50 text-zinc-900 bg-zinc-900";
-    signalAction = "Desmontar Put + Rolar Call para OTM";
-    signalNote = "Cruzamento UP — Preço R$ " + livePrice.toFixed(2) + " ultrapassou KAMA R$ " + currentKAMA.toFixed(2);
-
-    const targetCallTicker = liveQuotes?.call_06?.ticker || "BBDCG200";
-    const targetCallStrike = liveQuotes?.call_06?.strike || 20.00;
-
-    if (putTicker && putStrike) {
-      orderLegs.push({
-        action: "VENDA",
-        ticker: putTicker,
-        qty: qty,
-        strike: putStrike,
-        nature: "Desmontar Put (Zerar Proteção)",
-        color: "red"
-      });
-    }
-    if (callTicker && callStrike) {
-      orderLegs.push({
-        action: "COMPRA",
-        ticker: callTicker,
-        qty: qty,
-        strike: callStrike,
-        nature: "Recomprar Call Atual (Encerrar)",
-        color: "green"
-      });
-    }
-    orderLegs.push({
-      action: "VENDA",
-      ticker: targetCallTicker,
-      qty: qty,
-      strike: targetCallStrike,
-      nature: "Vender Call OTM nova (Δ ≈ 0.06)",
-      color: "red"
-    });
-
-  } else if (isCrossoverBelow) {
-    signalTitle = "TRANSIÇÃO: PROTEÇÃO (REGIME B)";
-    signalColorClass = "border-zinc-200 bg-zinc-50 text-zinc-900 bg-zinc-900";
-    signalAction = "Montar Put ATM + Rolar Call para ATM";
-    signalNote = "Cruzamento DOWN — Preço R$ " + livePrice.toFixed(2) + " caiu abaixo da KAMA R$ " + currentKAMA.toFixed(2);
-
-    const targetPutTicker = liveQuotes?.put_50?.ticker || "BBDCS175";
-    const targetPutStrike = liveQuotes?.put_50?.strike || parseFloat(livePrice.toFixed(0)) + 0.00;
-    const targetCallTicker = liveQuotes?.call_50?.ticker || "BBDCG175";
-    const targetCallStrike = liveQuotes?.call_50?.strike || parseFloat(livePrice.toFixed(0)) + 0.00;
-
-    orderLegs.push({
-      action: "COMPRA",
-      ticker: targetPutTicker,
-      qty: qty,
-      strike: targetPutStrike,
-      nature: "Comprar Put ATM nova (Δ ≈ -0.50)",
-      color: "green"
-    });
-    if (callTicker && callStrike) {
-      orderLegs.push({
-        action: "COMPRA",
-        ticker: callTicker,
-        qty: qty,
-        strike: callStrike,
-        nature: "Recomprar Call Atual (Encerrar)",
-        color: "green"
-      });
-    }
-    orderLegs.push({
-      action: "VENDA",
-      ticker: targetCallTicker,
-      qty: qty,
-      strike: targetCallStrike,
-      nature: "Vender Call ATM nova (Δ ≈ 0.50)",
-      color: "red"
-    });
-
-  } else {
-    if (currentRegime === "A") {
-      signalTitle = "REGIME A — ALTA ATIVA";
-      signalColorClass = "border-zinc-200 bg-zinc-50 text-zinc-900 bg-zinc-900";
-      signalAction = "Nenhuma Ordem Necessária";
-      signalNote = "Preço (R$ " + livePrice.toFixed(2) + ") acima da KAMA (R$ " + currentKAMA.toFixed(2) + "). Exposição direcional máxima.";
-    } else {
-      signalTitle = "REGIME B — HEDGE ATIVO";
-      signalColorClass = "border-zinc-200 bg-zinc-50 text-zinc-900 bg-zinc-900";
-      signalAction = "Nenhuma Ordem Necessária";
-      signalNote = "Preço (R$ " + livePrice.toFixed(2) + ") abaixo da KAMA (R$ " + currentKAMA.toFixed(2) + "). Caixa sintético preservado.";
-    }
-  }
 
   // Calculadora de Cenários
   const calculateScenario = (price: number) => {
@@ -733,6 +623,120 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
     const netReturnPercent = (totalPL / (entryPrice * qty)) * 100;
     return { totalPL, netReturnPercent };
   };
+
+  // ────────────────────────────────────────────────
+  // Lógica de Sinais Operacionais — Ordens de Home Broker
+  // ────────────────────────────────────────────────
+  interface OrderLeg {
+    action: "COMPRA" | "VENDA";
+    ticker: string;
+    qty: number;
+    strike: number;
+    nature: string;
+    color: "green" | "red" | "blue" | "amber";
+  }
+
+  let signalTitle = "MANTER COLLAR";
+  let signalAction = "Manter Estrutura Atual";
+  let orderLegs: OrderLeg[] = [];
+  let signalNote = "";
+  let needsAdjustment = false;
+
+  const isCrossoverAbove = currentRegime === "B" && livePrice > currentKAMA;
+  const isCrossoverBelow = currentRegime === "A" && livePrice < currentKAMA;
+
+  if (isCrossoverAbove) {
+    needsAdjustment = true;
+    signalTitle = "TRANSIÇÃO: ALTA (REGIME A)";
+    signalAction = "Desmontar Put + Rolar Call para OTM";
+    signalNote = `Cruzamento UP — Preço R$ ${livePrice.toFixed(2)} ultrapassou KAMA R$ ${currentKAMA.toFixed(2)}. Reduzir proteção e aumentar exposição direcional.`;
+
+    const targetCallTicker = liveQuotes?.call_06?.ticker || "BBDCG200";
+    const targetCallStrike = liveQuotes?.call_06?.strike || 20.00;
+
+    const activePut = optionsInCustody.find(o => o.type.includes("PUT") && o.qty > 0);
+    if (activePut) {
+      orderLegs.push({
+        action: "VENDA",
+        ticker: activePut.ticker,
+        qty: qty,
+        strike: activePut.strike || 17.39,
+        nature: "Desmontar Put (Zerar Proteção)",
+        color: "red"
+      });
+    }
+
+    const activeCall = optionsInCustody.find(o => o.type.includes("CALL") && o.qty > 0);
+    if (activeCall) {
+      orderLegs.push({
+        action: "COMPRA",
+        ticker: activeCall.ticker,
+        qty: qty,
+        strike: activeCall.strike || 19.14,
+        nature: "Recomprar Call Anterior (Encerrar)",
+        color: "green"
+      });
+    }
+
+    orderLegs.push({
+      action: "VENDA",
+      ticker: targetCallTicker,
+      qty: qty,
+      strike: targetCallStrike,
+      nature: "Vender nova Call OTM (Delta ~ 0.06)",
+      color: "red"
+    });
+
+  } else if (isCrossoverBelow) {
+    needsAdjustment = true;
+    signalTitle = "TRANSIÇÃO: CAIXA (REGIME B)";
+    signalAction = "Montar Put ATM + Rolar Call para ATM";
+    signalNote = `Cruzamento DOWN — Preço R$ ${livePrice.toFixed(2)} caiu abaixo da KAMA R$ ${currentKAMA.toFixed(2)}. Ativar proteção total da carteira.`;
+
+    const targetPutTicker = liveQuotes?.put_50?.ticker || "BBDCS175";
+    const targetPutStrike = liveQuotes?.put_50?.strike || 17.50;
+    const targetCallTicker = liveQuotes?.call_50?.ticker || "BBDCG175";
+    const targetCallStrike = liveQuotes?.call_50?.strike || 17.50;
+
+    orderLegs.push({
+      action: "COMPRA",
+      ticker: targetPutTicker,
+      qty: qty,
+      strike: targetPutStrike,
+      nature: "Comprar Put ATM (Delta ~ -0.50)",
+      color: "green"
+    });
+
+    const activeCall = optionsInCustody.find(o => o.type.includes("CALL") && o.qty > 0);
+    if (activeCall) {
+      orderLegs.push({
+        action: "COMPRA",
+        ticker: activeCall.ticker,
+        qty: qty,
+        strike: activeCall.strike || 19.14,
+        nature: "Recomprar Call Anterior (Encerrar)",
+        color: "green"
+      });
+    }
+
+    orderLegs.push({
+      action: "VENDA",
+      ticker: targetCallTicker,
+      qty: qty,
+      strike: targetCallStrike,
+      nature: "Vender nova Call ATM (Delta ~ 0.50)",
+      color: "red"
+    });
+
+  } else {
+    if (currentRegime === "A") {
+      signalTitle = "MANTER COLLAR: ALTA ATIVA (REGIME A)";
+      signalNote = `Preço atual (R$ ${livePrice.toFixed(2)}) sustentado acima da KAMA (R$ ${currentKAMA.toFixed(2)}). Nenhuma ordem pendente.`;
+    } else {
+      signalTitle = "MANTER COLLAR: PROTEÇÃO ATIVA (REGIME B)";
+      signalNote = `Preço atual (R$ ${livePrice.toFixed(2)}) abaixo da KAMA (R$ ${currentKAMA.toFixed(2)}). Posição de proteção total mantida.`;
+    }
+  }
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans antialiased selection:bg-zinc-200">
@@ -953,6 +957,48 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
               </p>
             </div>
           </div>
+
+          {/* Card de Recomendação Estratégica */}
+          <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs mb-8">
+            <div className="mb-4 pb-3 border-b border-zinc-150 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Recomendação Estratégica do Modelo</h2>
+                <p className="text-xs text-zinc-400">Ações recomendadas com base no regime de tendência KAMA</p>
+              </div>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
+                needsAdjustment ? "bg-amber-100 text-amber-800 border border-amber-200 animate-pulse" : "bg-zinc-100 text-zinc-650 border border-zinc-200"
+              }`}>
+                {needsAdjustment ? "REAJUSTAR ESTRUTURA" : "ESTRUTURA OK"}
+              </span>
+            </div>
+
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="flex-1">
+                <span className="text-xs text-zinc-500 font-medium">Status do Regime</span>
+                <h4 className="text-lg font-bold text-zinc-900 font-mono mt-0.5">{signalTitle}</h4>
+                <p className="text-xs text-zinc-650 mt-1 leading-relaxed">{signalNote}</p>
+              </div>
+
+              <div className="flex-shrink-0 md:w-80 p-4 rounded-lg bg-zinc-50 border border-zinc-200">
+                <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider font-mono block mb-2">Operações sugeridas</span>
+                {orderLegs.length > 0 ? (
+                  <ul className="space-y-2 font-mono text-xs">
+                    {orderLegs.map((leg, idx) => (
+                      <li key={idx} className="flex items-center justify-between gap-2 border-b border-zinc-150 pb-1.5 last:border-b-0 last:pb-0">
+                        <span className={`font-bold ${leg.action === "COMPRA" ? "text-emerald-600" : "text-rose-600"}`}>
+                          {leg.action}
+                        </span>
+                        <span className="font-bold text-zinc-900">{leg.ticker}</span>
+                        <span className="text-zinc-500">K: R$ {leg.strike.toFixed(2)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span className="text-xs text-zinc-400 font-mono">Nenhum ajuste necessário no Home Broker no momento.</span>
+                )}
+              </div>
+            </div>
+          </section>
 
           {/* Tabela de Custódia Unificada */}
           <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
