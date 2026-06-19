@@ -77,6 +77,14 @@ interface DashboardProps {
   initialWinTicker?: string;
 }
 
+const getOptionType = (ticker: string) => {
+  if (!ticker.startsWith("BBDC") || ticker.length <= 4) return null;
+  const letter = ticker[4].toUpperCase();
+  if (["M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"].includes(letter)) return "PUT";
+  if (["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"].includes(letter)) return "CALL";
+  return null;
+};
+
 export default function Dashboard({ initialState, initialHistory, activeQuotes, winIndicators, winLivePrice, initialCustody, initialWinTicker }: DashboardProps) {
   const [isMounted, setIsMounted] = useState(false);
   const [activeTab, setActiveTab] = useState<"bbdc4" | "win">("bbdc4");
@@ -196,15 +204,6 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
       qty = custodyBbdc4.availableQuantity;
       entryPrice = custodyBbdc4.averageCost || entryPrice;
     }
-
-    const getOptionType = (ticker: string) => {
-      if (!ticker.startsWith("BBDC") || ticker.length <= 4) return null;
-      const letter = ticker[4].toUpperCase();
-      if (["M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"].includes(letter)) return "PUT";
-      if (["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"].includes(letter)) return "CALL";
-      return null;
-    };
-
     // Busca Put na custódia (preferindo ativa, mas aceitando zerada)
     custodyPutItem = liveCustody.find((item: any) => 
       getOptionType(item.ticker) === "PUT" &&
@@ -321,28 +320,112 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   // Cálculo de Skew do Smile (Put IV - Call IV)
   const smileSkew = ((putQuote?.iv || 0.247) - (callQuote ? callQuote.iv : 0.213)) * 100;
 
-  // Cálculo do PnL Real-Time Atual (preços marcados a mercado e realizados)
-  let currentPutPL = 0;
-  if (putTicker) {
-    if (putQty > 0) {
-      const currentPutVal = putQuote ? (putQuote.price * putQty) : 0.0;
-      const initialPutVal = putCost * putQty;
-      currentPutPL = currentPutVal - initialPutVal;
-    } else if (custodyPutItem && custodyPutItem.averageCost > 0) {
-      currentPutPL = (custodyPutItem.averageCost - putCost) * qty;
+  // Cálculo dinâmico do PnL Real-Time de Opções (Ativas e Encerradas)
+  const optionsInCustody: any[] = [];
+  let calculatedPutsPL = 0;
+  let calculatedCallsPL = 0;
+
+  if (liveCustody && liveCustody.length > 0) {
+    liveCustody.forEach((item: any) => {
+      const type = getOptionType(item.ticker);
+      if (!type) return;
+
+      const itemQty = (item.availableQuantity || 0) + (item.collateralBlockedQuantity || 0);
+      
+      // Determina prêmio original de custo
+      let originalPremium = item.averageCost || 0.0;
+      if (item.ticker === "BBDCS2") originalPremium = 0.28;
+      else if (item.ticker === "BBDCG194") originalPremium = 0.09;
+      else if (item.ticker === state.active_put_ticker) originalPremium = state.put_premium_paid;
+      else if (item.ticker === state.active_call_ticker) originalPremium = state.call_premium_received;
+
+      // Determina cotação atual a mercado
+      let mktPrice = 0.0;
+      if (itemQty > 0) {
+        if (item.ticker === liveQuotes?.put?.ticker) mktPrice = liveQuotes?.put?.price || 0;
+        else if (item.ticker === liveQuotes?.call?.ticker) mktPrice = liveQuotes?.call?.price || 0;
+        else if (item.ticker === liveQuotes?.put_275?.ticker) mktPrice = liveQuotes?.put_275?.price || 0;
+        else if (item.ticker === liveQuotes?.call_275?.ticker) mktPrice = liveQuotes?.call_275?.price || 0;
+        else if (item.ticker === liveQuotes?.put_50?.ticker) mktPrice = liveQuotes?.put_50?.price || 0;
+        else if (item.ticker === liveQuotes?.call_50?.ticker) mktPrice = liveQuotes?.call_50?.price || 0;
+        else if (item.ticker === liveQuotes?.call_06?.ticker) mktPrice = liveQuotes?.call_06?.price || 0;
+        else if (type === "PUT" && putQuote?.ticker === item.ticker) mktPrice = putQuote?.price || 0;
+        else if (type === "CALL" && callQuote?.ticker === item.ticker) mktPrice = callQuote?.price || 0;
+        else mktPrice = item.averageCost || 0.0;
+      } else {
+        mktPrice = item.averageCost || 0.0;
+      }
+
+      // Calcula PnL
+      let itemPL = 0;
+      if (type === "PUT") {
+        if (itemQty > 0) {
+          itemPL = (mktPrice - originalPremium) * itemQty;
+        } else if (originalPremium > 0) {
+          itemPL = (mktPrice - originalPremium) * qty;
+        }
+        calculatedPutsPL += itemPL;
+      } else { // CALL
+        if (itemQty > 0) {
+          itemPL = (originalPremium - mktPrice) * itemQty;
+        } else if (originalPremium > 0) {
+          itemPL = (originalPremium - mktPrice) * qty;
+        }
+        calculatedCallsPL += itemPL;
+      }
+
+      const pnlPercent = (itemPL / (entryPrice * qty)) * 100;
+
+      if (itemQty > 0 || Math.abs(itemPL) > 0.01) {
+        optionsInCustody.push({
+          ticker: item.ticker,
+          type: `${type} Long (${itemQty > 0 ? "Ativa" : "Encerrada"})`,
+          qty: itemQty,
+          avgPrice: originalPremium,
+          mktPrice: itemQty > 0 ? mktPrice : (item.averageCost || originalPremium),
+          pnl: itemPL,
+          pnlPercent: pnlPercent
+        });
+      }
+    });
+  } else {
+    if (putTicker) {
+      const putMktPrice = putQuote?.price || 0;
+      const putPL = putQty > 0 
+        ? (putMktPrice - putCost) * putQty
+        : (custodyPutItem?.averageCost ? (custodyPutItem.averageCost - putCost) * qty : 0);
+      calculatedPutsPL = putPL;
+      optionsInCustody.push({
+        ticker: putTicker,
+        type: `Put Long (${putQty > 0 ? "Ativa" : "Encerrada"})`,
+        qty: putQty,
+        avgPrice: putCost,
+        mktPrice: putQty > 0 ? putMktPrice : 0,
+        pnl: putPL,
+        pnlPercent: (putPL / (entryPrice * qty)) * 100
+      });
+    }
+
+    if (callTicker) {
+      const callMktPrice = callQuote?.price || 0;
+      const callPL = callQty > 0
+        ? (callIncome - callMktPrice) * callQty
+        : (custodyCallItem?.averageCost ? (callIncome - custodyCallItem.averageCost) * qty : 0);
+      calculatedCallsPL = callPL;
+      optionsInCustody.push({
+        ticker: callTicker,
+        type: `Call Short (${callQty > 0 ? "Ativa" : "Encerrada"})`,
+        qty: callQty,
+        avgPrice: callIncome,
+        mktPrice: callQty > 0 ? callMktPrice : 0,
+        pnl: callPL,
+        pnlPercent: (callPL / (entryPrice * qty)) * 100
+      });
     }
   }
 
-  let currentCallPL = 0;
-  if (callTicker) {
-    if (callQty > 0) {
-      const currentCallVal = callQuote ? (callQuote.price * callQty) : 0.0;
-      const initialCallVal = callIncome * callQty;
-      currentCallPL = initialCallVal - currentCallVal;
-    } else if (custodyCallItem && custodyCallItem.averageCost > 0) {
-      currentCallPL = (callIncome - custodyCallItem.averageCost) * qty;
-    }
-  }
+  const currentPutPL = calculatedPutsPL;
+  const currentCallPL = calculatedCallsPL;
   
   const currentStockPL = (simulatedPrice - entryPrice) * qty;
 
@@ -551,41 +634,8 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
     pnlPercent: liveStockReturnPercent
   });
 
-  // 2. Put Option BBDCS2
-  if (putTicker) {
-    const putMktPrice = putQuote?.price || 0;
-    const putPL = putQty > 0 
-      ? (putMktPrice - putCost) * putQty
-      : (custodyPutItem?.averageCost ? (custodyPutItem.averageCost - putCost) * qty : 0);
-    const putPLPercent = (putPL / (entryPrice * qty)) * 100;
-    positionItems.push({
-      ticker: putTicker,
-      type: `Put Long (${putQty > 0 ? "Ativa" : "Encerrada"})`,
-      qty: putQty,
-      avgPrice: putCost,
-      mktPrice: putQty > 0 ? putMktPrice : (custodyPutItem?.averageCost || 0),
-      pnl: putPL,
-      pnlPercent: putPLPercent
-    });
-  }
-
-  // 3. Call Option BBDCG194
-  if (callTicker) {
-    const callMktPrice = callQuote?.price || 0;
-    const callPL = callQty > 0
-      ? (callIncome - callMktPrice) * callQty
-      : (custodyCallItem?.averageCost ? (callIncome - custodyCallItem.averageCost) * qty : 0);
-    const callPLPercent = (callPL / (entryPrice * qty)) * 100;
-    positionItems.push({
-      ticker: callTicker,
-      type: `Call Short (${callQty > 0 ? "Ativa" : "Encerrada"})`,
-      qty: callQty,
-      avgPrice: callIncome,
-      mktPrice: callQty > 0 ? callMktPrice : (custodyCallItem?.averageCost || 0),
-      pnl: callPL,
-      pnlPercent: callPLPercent
-    });
-  }
+  // 2. Opções da Custódia
+  positionItems.push(...optionsInCustody);
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans antialiased selection:bg-zinc-200">
