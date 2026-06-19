@@ -47,16 +47,22 @@ export async function GET() {
         }
       }
 
+      const getOptionType = (ticker: string) => {
+        if (!ticker.startsWith("BBDC") || ticker.length <= 4) return null;
+        const letter = ticker[4].toUpperCase();
+        if (["M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"].includes(letter)) return "PUT";
+        if (["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"].includes(letter)) return "CALL";
+        return null;
+      };
+
       // 2. Put
       let custodyPut = clearCustody.find((item: any) => 
-        item.ticker.startsWith("BBDC") && 
-        (item.ticker.includes("S") || item.ticker.includes("T") || item.ticker.includes("U") || item.ticker.includes("V") || item.ticker.includes("W") || item.ticker.includes("X") || item.ticker.includes("Y")) &&
+        getOptionType(item.ticker) === "PUT" &&
         (Math.abs(item.availableQuantity || 0) > 0 || Math.abs(item.collateralBlockedQuantity || 0) > 0)
       );
       if (!custodyPut) {
         custodyPut = clearCustody.find((item: any) => 
-          item.ticker.startsWith("BBDC") && 
-          (item.ticker.includes("S") || item.ticker.includes("T") || item.ticker.includes("U") || item.ticker.includes("V") || item.ticker.includes("W") || item.ticker.includes("X") || item.ticker.includes("Y"))
+          getOptionType(item.ticker) === "PUT"
         );
       }
 
@@ -89,14 +95,12 @@ export async function GET() {
 
       // 3. Call
       let custodyCall = clearCustody.find((item: any) => 
-        item.ticker.startsWith("BBDC") && 
-        (item.ticker.includes("G") || item.ticker.includes("H") || item.ticker.includes("I") || item.ticker.includes("J") || item.ticker.includes("K") || item.ticker.includes("L") || item.ticker.includes("A") || item.ticker.includes("B") || item.ticker.includes("C") || item.ticker.includes("D") || item.ticker.includes("E") || item.ticker.includes("F")) &&
+        getOptionType(item.ticker) === "CALL" &&
         (Math.abs(item.availableQuantity || 0) > 0 || Math.abs(item.collateralBlockedQuantity || 0) > 0)
       );
       if (!custodyCall) {
         custodyCall = clearCustody.find((item: any) => 
-          item.ticker.startsWith("BBDC") && 
-          (item.ticker.includes("G") || item.ticker.includes("H") || item.ticker.includes("I") || item.ticker.includes("J") || item.ticker.includes("K") || item.ticker.includes("L") || item.ticker.includes("A") || item.ticker.includes("B") || item.ticker.includes("C") || item.ticker.includes("D") || item.ticker.includes("E") || item.ticker.includes("F"))
+          getOptionType(item.ticker) === "CALL"
         );
       }
 
