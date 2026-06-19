@@ -8,6 +8,27 @@ export async function GET() {
   try {
     const state = await getHedgeState();
     
+    // Sanitização de dados corrompidos de execuções anteriores com bug de matching
+    if (state) {
+      let stateChanged = false;
+      if (state.active_call_ticker === "BBDCG194" && (state.call_premium_received > 2.0 || state.call_premium_received === 0)) {
+        state.call_premium_received = 0.09;
+        stateChanged = true;
+      }
+      if (state.active_put_ticker === "BBDCS2" && (state.put_premium_paid > 2.0 || state.put_premium_paid === 0)) {
+        state.put_premium_paid = 0.28;
+        stateChanged = true;
+      }
+      if (state.activation_price !== 17.80) {
+        state.activation_price = 17.80;
+        stateChanged = true;
+      }
+      if (stateChanged) {
+        state.net_premium_cost = (state.put_premium_paid || 0) - (state.call_premium_received || 0);
+        await saveHedgeState(state);
+      }
+    }
+
     // Busca cotações ativas
     const activeQuotes = await fetchActiveOptionsQuotes(
       state?.active_put_ticker ?? null,
@@ -41,10 +62,7 @@ export async function GET() {
           state.quantity = custodyBbdc4.availableQuantity;
           stateChanged = true;
         }
-        if (custodyBbdc4.averageCost && state.activation_price !== custodyBbdc4.averageCost) {
-          state.activation_price = custodyBbdc4.averageCost;
-          stateChanged = true;
-        }
+        // Apenas a quantidade é sincronizada da custódia, o preço de entrada é fixo em R$ 17,80
       }
 
       const getOptionType = (ticker: string) => {
