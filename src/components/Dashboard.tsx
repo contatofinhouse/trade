@@ -805,7 +805,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             
             <div className="space-y-6">
               <div>
-                <span className="text-zinc-500 text-sm">Resultado Líquido do Collar</span>
+                <span className="text-zinc-500 text-sm font-semibold">Resultado Total Consolidado (Ação + Opções)</span>
                 <div className={`text-3xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono ${liveTotalPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                   {liveTotalPL >= 0 ? "+" : ""}R$ {liveTotalPL.toLocaleString("pt-BR", {maximumFractionDigits: 0})}
                   <span className="text-xs font-bold">({liveReturnPercent >= 0 ? "+" : ""}{liveReturnPercent.toFixed(2)}%)</span>
@@ -814,14 +814,14 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
 
               <div className="p-4 rounded-lg bg-zinc-50 border border-zinc-100 space-y-3">
                 <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-500 font-medium">Resultado Sem Hedge (Long)</span>
+                  <span className="text-zinc-500 font-medium">Valorização de BBDC4 (Ações)</span>
                   <span className={`font-semibold font-mono ${liveStockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                     {liveStockPL >= 0 ? "+" : ""}R$ {liveStockPL.toLocaleString("pt-BR", {maximumFractionDigits: 0})} ({liveStockReturnPercent >= 0 ? "+" : ""}{liveStockReturnPercent.toFixed(2)}%)
                   </span>
                 </div>
                 
                 <div className="flex justify-between items-center text-xs pt-2 border-t border-zinc-200">
-                  <span className="text-zinc-500 font-medium">Assimetria Gerada pelo Collar</span>
+                  <span className="text-zinc-500 font-medium">Resultado Líquido do Collar (Opções)</span>
                   <span className={`font-bold font-mono ${liveTotalPL - liveStockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                     {liveTotalPL - liveStockPL >= 0 ? "+" : ""}R$ {Math.round(liveTotalPL - liveStockPL).toLocaleString("pt-BR")}
                   </span>
