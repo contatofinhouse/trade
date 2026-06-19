@@ -19,10 +19,8 @@ export async function GET() {
         state.put_premium_paid = 0.28;
         stateChanged = true;
       }
-      if (state.activation_price !== 17.80) {
-        state.activation_price = 17.80;
-        stateChanged = true;
-      }
+      // Apenas sanitiza premiums das opções
+
       if (stateChanged) {
         state.net_premium_cost = (state.put_premium_paid || 0) - (state.call_premium_received || 0);
         await saveHedgeState(state);
@@ -62,7 +60,10 @@ export async function GET() {
           state.quantity = custodyBbdc4.availableQuantity;
           stateChanged = true;
         }
-        // Apenas a quantidade é sincronizada da custódia, o preço de entrada é fixo em R$ 17,80
+        if (custodyBbdc4.averageCost && state.activation_price !== custodyBbdc4.averageCost) {
+          state.activation_price = custodyBbdc4.averageCost;
+          stateChanged = true;
+        }
       }
 
       const getOptionType = (ticker: string) => {

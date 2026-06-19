@@ -538,56 +538,54 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
     };
   };
 
-  const currentMetrics = calculateScenario(simulatedPrice);
+     const positionItems = [];
+  
+  // 1. Stock BBDC4
+  positionItems.push({
+    ticker: "BBDC4",
+    type: "Ação",
+    qty: qty,
+    avgPrice: entryPrice,
+    mktPrice: livePrice,
+    pnl: liveStockPL,
+    pnlPercent: liveStockReturnPercent
+  });
 
-  // Geração de Dados do Gráfico
-  const chartData = [];
-  for (let p = 14.5; p <= 21.5; p += 0.1) {
-    const formattedPrice = Math.round(p * 100) / 100;
-    const scenario = calculateScenario(formattedPrice);
-    chartData.push({
-      price: formattedPrice,
-      "Retorno com Hedge (Collar)": Math.round(scenario.totalPL),
-      "Retorno sem Hedge (Long)": Math.round(scenario.stockPL),
+  // 2. Put Option BBDCS2
+  if (putTicker) {
+    const putMktPrice = putQuote?.price || 0;
+    const putPL = putQty > 0 
+      ? (putMktPrice - putCost) * putQty
+      : (custodyPutItem?.averageCost ? (custodyPutItem.averageCost - putCost) * qty : 0);
+    const putPLPercent = (putPL / (entryPrice * qty)) * 100;
+    positionItems.push({
+      ticker: putTicker,
+      type: `Put Long (${putQty > 0 ? "Ativa" : "Encerrada"})`,
+      qty: putQty,
+      avgPrice: putCost,
+      mktPrice: putQty > 0 ? putMktPrice : (custodyPutItem?.averageCost || 0),
+      pnl: putPL,
+      pnlPercent: putPLPercent
     });
   }
 
-  // Tabela de Cenários Dinâmica
-  const fixedScenarios = Array.from(new Set([
-    14.50,
-    15.50,
-    16.50,
-    17.00,
-    ...(putStrike ? [putStrike] : []),
-    livePrice,
-    entryPrice,
-    18.50,
-    ...(callStrike ? [callStrike] : []),
-    20.00,
-    21.00
-  ])).sort((a, b) => a - b);
-
-  const getStatusBadge = () => {
-    if (putStrike && simulatedPrice <= putStrike) {
-      return (
-        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-          <ShieldCheck className="h-3 w-3 mr-1.5" /> Proteção Ativada (Loss Limitado)
-        </span>
-      );
-    } else if (callStrike && simulatedPrice >= callStrike) {
-      return (
-        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-          <AlertTriangle className="h-3 w-3 mr-1.5" /> Lucro Máximo Atingido (Cap)
-        </span>
-      );
-    } else {
-      return (
-        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-zinc-50 text-zinc-700 border border-zinc-200 font-mono">
-          <ArrowRightLeft className="h-3 w-3 mr-1.5 text-zinc-500" /> {putTicker ? "Flutuação Livre (Zona Collar)" : "Exposição Direcional (Sem Put)"}
-        </span>
-      );
-    }
-  };
+  // 3. Call Option BBDCG194
+  if (callTicker) {
+    const callMktPrice = callQuote?.price || 0;
+    const callPL = callQty > 0
+      ? (callIncome - callMktPrice) * callQty
+      : (custodyCallItem?.averageCost ? (callIncome - custodyCallItem.averageCost) * qty : 0);
+    const callPLPercent = (callPL / (entryPrice * qty)) * 100;
+    positionItems.push({
+      ticker: callTicker,
+      type: `Call Short (${callQty > 0 ? "Ativa" : "Encerrada"})`,
+      qty: callQty,
+      avgPrice: callIncome,
+      mktPrice: callQty > 0 ? callMktPrice : (custodyCallItem?.averageCost || 0),
+      pnl: callPL,
+      pnlPercent: callPLPercent
+    });
+  }
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans antialiased selection:bg-zinc-200">
@@ -626,15 +624,12 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-zinc-200">
               <div>
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-600 border border-zinc-200">
+                  <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-650 border border-zinc-200">
                     Quantitative Trend Following
-                  </span>
-                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-zinc-50 text-zinc-700 border border-zinc-200">
-                    Monitor Operacional Futuro (WIN)
                   </span>
                 </div>
                 <h1 className="text-3xl font-extrabold tracking-tight text-zinc-900">
-                  Trend Following: <span className="text-zinc-950">LONG/SHORT WIN</span>
+                  Trend Following: <span className="text-zinc-950 font-mono">LONG/SHORT WIN</span>
                 </h1>
               </div>
               
@@ -663,741 +658,137 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
           </main>
         </div>
       ) : (
-        <>
-          {/* Container Principal */}
-          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        {/* Header */}
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-zinc-200">
-          <div>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-600 border border-zinc-200">
-                Quantitative Portfolio
-              </span>
-              {getStatusBadge()}
-            </div>
-            <h1 className="text-3xl font-extrabold tracking-tight text-zinc-900">
-              Monitor de Hedge: <span className="text-zinc-950">BBDC4 Collar</span>
-            </h1>
-          </div>
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-300">
           
-          <div className="flex flex-col md:text-right">
-            <span className="text-xs text-zinc-400">Operação Iniciada em</span>
-            <span className="text-sm font-semibold text-zinc-700">
-              {new Date(state.activation_date).toLocaleDateString("pt-BR")}
-            </span>
-          </div>
-        </header>        {/* Dashboard Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          
-          {/* Card: Detalhes da Operação */}
-          <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-4 font-mono">
-              <Layers className="h-4 w-4 text-zinc-500" /> DETALHES DA ESTRUTURA
-            </h3>
+          {/* Header */}
+          <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-zinc-200">
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-650 border border-zinc-200 animate-pulse">
+                  Quantitative Portfolio
+                </span>
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-zinc-100 text-zinc-700 border border-zinc-200 font-mono">
+                  Hedge Ativo: BBDC4 Collar
+                </span>
+              </div>
+              <h1 className="text-3xl font-extrabold tracking-tight text-zinc-900">
+                Monitor de Hedge: <span className="text-zinc-950 font-mono">BBDC4 Collar</span>
+              </h1>
+            </div>
             
-            <div className="space-y-4">
-              <div className="flex justify-between items-center py-2 border-b border-zinc-100">
-                <span className="text-zinc-500 text-sm">Ações BBDC4</span>
-                <span className="font-mono text-sm font-semibold text-zinc-900 flex flex-col items-end">
-                  <span>{qty.toLocaleString("pt-BR")} Qtd @ R$ {entryPrice.toFixed(2)}</span>
-                  {liveQuotes?.underlyingPrice && (
-                    <span className="text-[10px] font-normal text-zinc-500">
-                      Mkt: R$ {liveQuotes.underlyingPrice.toFixed(2)}
-                    </span>
-                  )}
-                </span>
-              </div>
-              <div className="flex justify-between items-center py-2 border-b border-zinc-100">
-                <span className="text-zinc-500 text-sm">Put Long (Proteção)</span>
-                <span className="font-mono text-sm font-semibold text-emerald-600 flex flex-col items-end">
-                  <span>{putTicker ? `${putTicker} (K: R$ ${putStrike?.toFixed(2)})` : "DESMONTADA"}</span>
-                  {putQuote?.price ? (
-                    <span className="text-[10px] font-normal text-zinc-500">
-                      Mkt: R$ {putQuote.price.toFixed(2)}
-                    </span>
-                  ) : null}
-                </span>
-              </div>
-              <div className="flex justify-between items-center py-2 border-b border-zinc-100">
-                <span className="text-zinc-500 text-sm">Call Short (Financ.)</span>
-                <span className="font-mono text-sm font-semibold text-zinc-800 flex flex-col items-end">
-                  <span>{callTicker ? `${callTicker} (K: R$ ${callStrike?.toFixed(2)})` : "NENHUMA"}</span>
-                  {callQuote?.price ? (
-                    <span className="text-[10px] font-normal text-zinc-500">
-                      Mkt: R$ {callQuote.price.toFixed(2)}
-                    </span>
-                  ) : null}
-                </span>
-              </div>
-              <div className="flex justify-between items-center py-2 border-b border-zinc-100">
-                <span className="text-zinc-500 text-sm">Prêmio da Put Pago</span>
-                <span className="font-mono text-sm font-semibold text-zinc-700">
-                  {putTicker 
-                    ? `R$ ${putCost.toFixed(2)} (- R$ ${Math.round(putCost * qty)})` 
-                    : "R$ 0,00"}
-                </span>
-              </div>
-              <div className="flex justify-between items-center py-2 border-b border-zinc-100">
-                <span className="text-zinc-500 text-sm">Prêmio da Call Recebido</span>
-                <span className="font-mono text-sm font-semibold text-zinc-700">
-                  {callTicker 
-                    ? `R$ ${callIncome.toFixed(2)} (+ R$ ${Math.round(callIncome * qty)})` 
-                    : "R$ 0,00"}
-                </span>
-              </div>
-              <div className="flex justify-between items-center pt-2">
-                <span className="text-zinc-500 text-sm">Custo Líquido do Hedge</span>
-                <span className="font-mono text-sm font-bold text-zinc-900">R$ {netCost.toFixed(2)} (- R$ {Math.round(netCost * qty)})</span>
+            <div className="flex flex-col md:text-right font-mono text-xs text-zinc-500 gap-1">
+              <div>Iniciado em: {new Date(state.activation_date).toLocaleDateString("pt-BR")}</div>
+              <div className="flex items-center md:justify-end gap-1.5 font-bold text-emerald-600">
+                <span className={`w-2 h-2 rounded-full ${isFetchingQuotes ? "bg-amber-500 animate-pulse" : "bg-emerald-500"}`} />
+                {isFetchingQuotes ? "ATUALIZANDO..." : "CONECTADO A CLEAR API"}
               </div>
             </div>
-          </div>
+          </header>
 
-          {/* Card: Simulador Interativo */}
-          <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-4 font-mono">
-              <RefreshCw className="h-4 w-4 text-zinc-500" /> SIMULADOR DE CENÁRIOS
-            </h3>
+          {/* Três Cards Principais */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             
-            <div className="flex flex-col h-full justify-between pb-2">
-              <div className="space-y-4">
-                <div className="flex justify-between items-baseline">
-                  <span className="text-zinc-500 text-sm">Preço Simulado de BBDC4</span>
-                  <span className="text-2xl font-black text-zinc-900 tracking-tight font-mono">R$ {simulatedPrice.toFixed(2)}</span>
-                </div>
-                
-                {/* Input Slider */}
-                <input 
-                  type="range" 
-                  min="14.50" 
-                  max="21.50" 
-                  step="0.05"
-                  value={simulatedPrice} 
-                  onChange={(e) => setSimulatedPrice(parseFloat(e.target.value))}
-                  className="w-full h-1.5 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-zinc-800 focus:outline-none"
-                />
-                
-                <div className="flex justify-between text-[10px] text-zinc-400 font-mono">
-                  <span>MÍN: R$ 14,50</span>
-                  <span className="text-zinc-650 font-bold">ENTRADA: R$ 17,80</span>
-                  <span>MÁX: R$ 21,50</span>
-                </div>
-              </div>
-
-              <div className="mt-6 p-4 rounded-lg bg-zinc-50 border border-zinc-100 space-y-3">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-500 font-medium">Valor Total da Carteira</span>
-                  <span className="font-bold text-zinc-700 font-mono">R$ {currentMetrics.totalVal.toLocaleString("pt-BR", {minimumFractionDigits: 2})}</span>
-                </div>
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-400 font-medium">Valor das Ações Puras</span>
-                  <span className="font-semibold text-zinc-500 font-mono">R$ {currentMetrics.stockVal.toLocaleString("pt-BR", {minimumFractionDigits: 2})}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Card: PnL Consolidado */}
-          <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-4 font-mono">
-              <DollarSign className="h-4 w-4 text-zinc-500" /> LUCRO / PREJUÍZO ATUAL
-            </h3>
-            
-            <div className="space-y-6">
+            {/* Card 1: Resultado Consolidado */}
+            <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs flex flex-col justify-between">
               <div>
-                <span className="text-zinc-500 text-sm font-semibold">Resultado Total Consolidado (Ação + Opções)</span>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-3 font-mono">
+                  <DollarSign className="h-4 w-4 text-zinc-500" /> LUCRO / PREJUÍZO ATUAL
+                </h3>
+                <span className="text-zinc-500 text-xs font-medium">Resultado Total Consolidado (Ação + Opções)</span>
                 <div className={`text-3xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono ${liveTotalPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                  {liveTotalPL >= 0 ? "+" : ""}R$ {liveTotalPL.toLocaleString("pt-BR", {maximumFractionDigits: 0})}
+                  {liveTotalPL >= 0 ? "+" : ""}R$ {liveTotalPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}
                   <span className="text-xs font-bold">({liveReturnPercent >= 0 ? "+" : ""}{liveReturnPercent.toFixed(2)}%)</span>
                 </div>
               </div>
+              <p className="text-[10px] text-zinc-400 mt-4 border-t border-zinc-150 pt-3">
+                Lucro/prejuízo consolidado da posição considerando o ativo subjacente e o hedge.
+              </p>
+            </div>
 
-              <div className="p-4 rounded-lg bg-zinc-50 border border-zinc-100 space-y-3">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-500 font-medium">Valorização de BBDC4 (Ações)</span>
-                  <span className={`font-semibold font-mono ${liveStockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                    {liveStockPL >= 0 ? "+" : ""}R$ {liveStockPL.toLocaleString("pt-BR", {maximumFractionDigits: 0})} ({liveStockReturnPercent >= 0 ? "+" : ""}{liveStockReturnPercent.toFixed(2)}%)
-                  </span>
+            {/* Card 2: Detalhes das Ações */}
+            <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs flex flex-col justify-between">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-3 font-mono">
+                  <Layers className="h-4 w-4 text-zinc-500" /> POSIÇÃO EM AÇÕES (BBDC4)
+                </h3>
+                <span className="text-zinc-500 text-xs font-medium">Valorização de BBDC4</span>
+                <div className={`text-3xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono ${liveStockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                  {liveStockPL >= 0 ? "+" : ""}R$ {liveStockPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}
+                  <span className="text-xs font-bold">({liveStockReturnPercent >= 0 ? "+" : ""}{liveStockReturnPercent.toFixed(2)}%)</span>
                 </div>
-                
-                <div className="flex justify-between items-center text-xs pt-2 border-t border-zinc-200">
-                  <span className="text-zinc-500 font-medium">Resultado Líquido do Collar (Opções)</span>
-                  <span className={`font-bold font-mono ${liveTotalPL - liveStockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                    {liveTotalPL - liveStockPL >= 0 ? "+" : ""}R$ {Math.round(liveTotalPL - liveStockPL).toLocaleString("pt-BR")}
+              </div>
+              <div className="text-[10px] text-zinc-500 mt-4 border-t border-zinc-150 pt-3 flex justify-between font-mono">
+                <span>Qtd: {qty.toLocaleString("pt-BR")}</span>
+                <span>Preço Médio: R$ {entryPrice.toFixed(2)}</span>
+                <span>Mkt: R$ {livePrice.toFixed(2)}</span>
+              </div>
+            </div>
+
+            {/* Card 3: Detalhes das Opções */}
+            <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs flex flex-col justify-between">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-3 font-mono">
+                  <ShieldCheck className="h-4 w-4 text-zinc-500" /> ESTRUTURA DE HEDGE (OPÇÕES)
+                </h3>
+                <span className="text-zinc-500 text-xs font-medium">Resultado Líquido do Collar</span>
+                <div className={`text-3xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono ${(currentPutPL + currentCallPL) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                  {(currentPutPL + currentCallPL) >= 0 ? "+" : ""}R$ {(currentPutPL + currentCallPL).toLocaleString("pt-BR", {maximumFractionDigits: 2})}
+                  <span className="text-xs font-bold">
+                    ({((currentPutPL + currentCallPL) / (entryPrice * qty) * 100) >= 0 ? "+" : ""}{((currentPutPL + currentCallPL) / (entryPrice * qty) * 100).toFixed(2)}%)
                   </span>
                 </div>
               </div>
+              <div className="text-[10px] text-zinc-500 mt-4 border-t border-zinc-150 pt-3 flex justify-between font-mono">
+                <span>Put Cost: R$ {putCost.toFixed(2)}</span>
+                <span>Call Income: R$ {callIncome.toFixed(2)}</span>
+                <span>Custo Líquido: R$ {netCost.toFixed(2)}</span>
+              </div>
             </div>
+
           </div>
 
-        </div>
-
-        {/* Custódia Real-Time (Clear API) */}
-        {liveCustody && liveCustody.length > 0 && (
-          <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs mb-8">
-            <div className="flex items-center justify-between mb-4 pb-3 border-b border-zinc-100">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-zinc-500" />
-                <div>
-                  <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Posição Integrada Clear API</h2>
-                  <p className="text-xs text-zinc-400">Custódia detectada em tempo real diretamente na corretora Clear</p>
-                </div>
+          {/* Tabela de Custódia Unificada */}
+          <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
+            <div className="mb-6 pb-3 border-b border-zinc-150 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Detalhamento de Ativos e Posições (Clear API)</h2>
+                <p className="text-xs text-zinc-400">Custódia física e derivativos integrados em tempo real diretamente na corretora</p>
               </div>
               <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-zinc-100 text-zinc-650 border border-zinc-200">
                 SINCRO CORRETORA
               </span>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {liveCustody
-                .filter((item: any) => item.availableQuantity > 0 || item.collateralBlockedQuantity > 0 || item.ticker === "BBDC4" || item.ticker === "BBDCS2" || item.ticker === "BBDCG194")
-                .map((item: any, idx: number) => (
-                  <div key={idx} className="p-4 rounded-lg bg-zinc-50 border border-zinc-200 font-mono flex flex-col justify-between">
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-zinc-400">{item.module || "Custódia"}</span>
-                      <div className="text-lg font-bold text-zinc-950 mt-1">{item.ticker}</div>
-                    </div>
-                    <div className="mt-4 space-y-1">
-                      <div className="flex justify-between text-xs text-zinc-600">
-                        <span>Quantidade:</span>
-                        <span className="font-bold text-zinc-900">{item.availableQuantity + item.collateralBlockedQuantity}</span>
-                      </div>
-                      <div className="flex justify-between text-xs text-zinc-600">
-                        <span>Preço Médio:</span>
-                        <span className="text-zinc-700">R$ {item.averageCost?.toFixed(2)}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left text-zinc-500">
+                <thead className="text-[10px] uppercase tracking-wider text-zinc-400 bg-zinc-50 border-b border-zinc-250 font-mono">
+                  <tr>
+                    <th scope="col" className="px-6 py-4 font-bold text-zinc-900">Ativo / Ticker</th>
+                    <th scope="col" className="px-6 py-4 font-bold">Tipo</th>
+                    <th scope="col" className="px-6 py-4 font-bold text-right">Quantidade</th>
+                    <th scope="col" className="px-6 py-4 font-bold text-right">Preço Médio</th>
+                    <th scope="col" className="px-6 py-4 font-bold text-right">Cotação Atual</th>
+                    <th scope="col" className="px-6 py-4 font-bold text-right text-zinc-900">Resultado Líquido (PnL)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-150">
+                  {positionItems.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-zinc-50/50 transition-all font-mono">
+                      <td className="px-6 py-4 font-bold text-zinc-950">{item.ticker}</td>
+                      <td className="px-6 py-4 text-xs text-zinc-500 font-sans">{item.type}</td>
+                      <td className="px-6 py-4 text-right font-bold text-zinc-800">{item.qty.toLocaleString("pt-BR")}</td>
+                      <td className="px-6 py-4 text-right">R$ {item.avgPrice.toFixed(2)}</td>
+                      <td className="px-6 py-4 text-right">R$ {item.mktPrice.toFixed(2)}</td>
+                      <td className={`px-6 py-4 text-right font-bold ${item.pnl >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                        {item.pnl >= 0 ? "+" : ""}R$ {item.pnl.toLocaleString("pt-BR", {minimumFractionDigits: 2, maximumFractionDigits: 2})} ({item.pnlPercent >= 0 ? "+" : ""}{item.pnlPercent.toFixed(2)}%)
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </section>
-        )}
-
-        {/* Monitor Quantitativo de Sinais */}
-        <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs mb-8">
-          <div className="flex items-center gap-2 mb-6 pb-4 border-b border-zinc-100">
-            <Cpu className="h-4 w-4 text-zinc-500" />
-            <div>
-              <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Quant Decision Engine (Monitor KAMA & Fatores)</h2>
-              <p className="text-xs text-zinc-400">Algoritmo de tomada de decisão para regimes de travas de hedge e crossovers adaptativos</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
-            {/* Coluna 1: Stance do Modelo */}
-            <div className="flex flex-col justify-between p-5 rounded-lg border border-zinc-200 bg-zinc-50 relative overflow-hidden">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider font-mono">Diretriz do Modelo</span>
-                <div className="text-lg font-bold text-zinc-900 mt-2 mb-3 tracking-tight flex items-center gap-2 font-mono">
-                  <Radio className={`h-4 w-4 ${currentRegime === "A" ? "text-emerald-600" : "text-zinc-650"}`} />
-                  {currentRegime === "A" ? "REGIME A: ALTA / ALFA" : "REGIME B: PROTEÇÃO / CAIXA"}
-                </div>
-                <p className="text-xs text-zinc-500 leading-relaxed">
-                  {currentRegime === "A" 
-                    ? `Preço de BBDC4 (R$ ${livePrice.toFixed(2)}) acima da KAMA (R$ ${currentKAMA.toFixed(2)}). O robô está em modo de maximização de alfa. Put desmontada (Proteção zerada) e Call curta rolada OTM para permitir participação na alta.`
-                    : `Preço de BBDC4 (R$ ${livePrice.toFixed(2)}) abaixo da KAMA (R$ ${currentKAMA.toFixed(2)}). O robô está em modo de preservação de capital. Put ATM ativa (Delta ~-0.50) e Call vendida ATM para travar a carteira em Cash Sintético.`
-                  }
-                </p>
-              </div>
-              <div className="mt-4 pt-4 border-t border-zinc-200 flex justify-between items-center text-[10px] text-zinc-400 font-mono">
-                <span>Cálculo: Diário (Pós-Fechamento)</span>
-                <span>Data: {latestMetric.data}</span>
-              </div>
-            </div>
-
-            {/* Coluna 2: Fatores de Risco */}
-            <div className="space-y-4 p-5 rounded-lg border border-zinc-200 bg-white">
-              <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider flex items-center gap-1.5 font-mono">
-                <Activity className="h-3.5 w-3.5 text-zinc-400" /> Fatores Quantitativos (KAMA + AQR Style)
-              </span>
-              
-              <div className="space-y-3 mt-2">
-                <div className="flex justify-between items-center py-1.5 border-b border-zinc-50">
-                  <span className="text-xs text-zinc-500">Média Adaptativa KAMA</span>
-                  <span className="font-mono text-xs font-bold text-zinc-700">
-                    R$ {currentKAMA.toFixed(2)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between items-center py-1.5 border-b border-zinc-50">
-                  <span className="text-xs text-zinc-500">Afastamento da KAMA</span>
-                  <span className={`font-mono text-xs font-bold ${distToKama > 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                    {distToKama > 0 ? "+" : ""}{distToKama.toFixed(2)}%
-                  </span>
-                </div>
-
-                <div className="flex justify-between items-center py-1.5 border-b border-zinc-50">
-                  <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                    {currentTSMOM < 0 ? <TrendingDown className="h-3.5 w-3.5 text-rose-500" /> : <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />}
-                    Momentum Composto (TSMOM)
-                  </div>
-                  <span className={`font-mono text-xs font-bold ${currentTSMOM < 0 ? "text-rose-600" : "text-emerald-600"}`}>
-                    {currentTSMOM.toFixed(4)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between items-center py-1.5 border-b border-zinc-50">
-                  <span className="text-xs text-zinc-500">Volatilidade Histórica (HV 20d)</span>
-                  <span className="font-mono text-xs font-bold text-zinc-700">
-                    {(currentHV * 100).toFixed(2)}%
-                  </span>
-                </div>
-
-                <div className="flex justify-between items-center py-1.5 border-b border-zinc-50">
-                  <span className="text-xs text-zinc-500">Z-Score de Vol. (Regime)</span>
-                  <span className={`font-mono text-xs font-bold ${currentZScore > 0 ? "text-zinc-600" : "text-zinc-450"}`}>
-                    {currentZScore > 0 ? "+" : ""}{currentZScore.toFixed(2)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between items-center py-1.5">
-                  <span className="text-xs text-zinc-500">Vol. Risk Premium (VRP Puts)</span>
-                  <span className={`font-mono text-xs font-bold ${currentVRP < 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                    {currentVRP > 0 ? "+" : ""}{(currentVRP * 100).toFixed(2)}%
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Coluna 3: Gatilhos e Status */}
-            <div className="p-5 rounded-lg border border-zinc-200 bg-white space-y-4">
-              <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider font-mono">
-                Status dos Gatilhos Operacionais
-              </span>
-
-              <div className="space-y-3.5 mt-2">
-                <div>
-                  <span className="text-[10px] text-zinc-400 font-semibold block mb-1 font-mono">GATILHOS KAMA</span>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-zinc-500">Tendência de Alta (Preço &gt; KAMA)</span>
-                      <span className={`flex items-center gap-1 font-semibold ${livePrice > currentKAMA ? "text-emerald-600" : "text-zinc-400"}`}>
-                        {livePrice > currentKAMA ? "Ativo (Regime A)" : "Inativo"}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-zinc-500">Tendência de Baixa (Preço &lt; KAMA)</span>
-                      <span className={`flex items-center gap-1 font-semibold ${livePrice < currentKAMA ? "text-rose-600" : "text-zinc-400"}`}>
-                        {livePrice < currentKAMA ? "Ativo (Regime B)" : "Inativo"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-zinc-100">
-                  <span className="text-[10px] text-zinc-400 font-semibold block mb-1 font-mono">FATORES ADICIONAIS</span>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-zinc-500">Reversão de Momentum (TSMOM &gt; 0)</span>
-                      <span className={`flex items-center gap-1 font-semibold ${currentTSMOM > 0 ? "text-emerald-600" : "text-zinc-400"}`}>
-                        {currentTSMOM > 0 ? "Ativo" : "Inativo"}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-zinc-500">Vol Crush (IV Percentil &gt; 95%)</span>
-                      <span className="flex items-center gap-1 font-semibold text-zinc-400">
-                        Inativo
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-          </div>
-        </section>
-
-        {/* Monitor Real-Time de Volatilidade, Skew & Gregas */}
-        <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs mb-8">
-          <div className="flex items-center gap-2 mb-6 pb-4 border-b border-zinc-100">
-            <Scale className="h-4 w-4 text-zinc-500" />
-            <div>
-              <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Monitor Analítico & Sinais de Ajuste Collar (Cotação B3)</h2>
-              <p className="text-xs text-zinc-400">Acompanhamento atômico dos limites operacionais de Skew da Superfície, Z-Score de IV e Delta Líquido com recomendações de compra/venda</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
-            {/* Tabela de Parâmetros Operacionais (ocupa 2 colunas) */}
-            <div className="lg:col-span-2 border border-zinc-200 rounded-lg overflow-hidden bg-white shadow-xs flex flex-col justify-between">
-              <div className="p-4 bg-zinc-50 border-b border-zinc-200">
-                <span className="text-[10px] uppercase font-bold text-zinc-500 font-mono">Parâmetros Quantitativos de Cobertura</span>
-              </div>
-              <div className="overflow-x-auto flex-1">
-                <table className="w-full text-sm text-left text-zinc-500">
-                  <thead className="text-[10px] uppercase tracking-wider text-zinc-400 bg-zinc-50 border-b border-zinc-200">
-                    <tr>
-                      <th scope="col" className="px-5 py-3 font-bold">Indicador</th>
-                      <th scope="col" className="px-5 py-3 font-bold">Valor Atual</th>
-                      <th scope="col" className="px-5 py-3 font-bold">Alerta de Ajuste</th>
-                      <th scope="col" className="px-5 py-3 font-bold">Ação Esperada</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100 font-sans">
-                    
-                    {/* Linha KAMA */}
-                    <tr className="hover:bg-zinc-50">
-                      <td className="px-5 py-4">
-                        <div className="font-semibold text-zinc-900 text-xs uppercase tracking-wider font-mono">Média Adaptativa KAMA</div>
-                        <div className="text-[10px] text-zinc-400">Média adaptativa de Kaufman (n=10) como rastreador de tendência</div>
-                      </td>
-                      <td className="px-5 py-4 font-mono font-bold text-zinc-950">
-                        <span className={`px-2 py-0.5 rounded text-xs ${currentRegime === "A" ? "bg-emerald-50 text-emerald-700 font-extrabold" : "bg-rose-50 text-rose-700 font-extrabold"}`}>
-                          R$ {currentKAMA.toFixed(2)} ({distToKama > 0 ? "+" : ""}{distToKama.toFixed(2)}%)
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 font-semibold text-zinc-700 font-mono text-xs">
-                        Cruzamento Preço vs KAMA
-                      </td>
-                      <td className="px-5 py-4 text-xs text-zinc-650">
-                        Alterna regimes de travas de proteção (Alfa vs Capital)
-                      </td>
-                    </tr>
-
-                    {/* Linha Skew */}
-                    <tr className="hover:bg-zinc-50">
-                      <td className="px-5 py-4">
-                        <div className="font-semibold text-zinc-900 text-xs uppercase tracking-wider font-mono">Skew da Superfície</div>
-                        <div className="text-[10px] text-zinc-400">Diferença de IV entre Delta -0.375 e 0.131</div>
-                      </td>
-                      <td className="px-5 py-4 font-mono font-bold text-zinc-950">
-                        <span className={`px-2 py-0.5 rounded text-xs ${skewSuperficie > 5.0 ? "bg-zinc-100 text-zinc-800" : "bg-zinc-50 text-zinc-600"}`}>
-                          {skewSuperficie.toFixed(2)}%
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 font-semibold text-zinc-700 font-mono text-xs">
-                        &gt; +5.0%
-                      </td>
-                      <td className="px-5 py-4 text-xs text-zinc-650">
-                        Rolling Down da Put (Ganha crédito no pânico)
-                      </td>
-                    </tr>
-
-                    {/* Linha Z-Score IV */}
-                    <tr className="hover:bg-zinc-50">
-                      <td className="px-5 py-4">
-                        <div className="font-semibold text-zinc-900 text-xs uppercase tracking-wider font-mono">Z-Score de IV (20d)</div>
-                        <div className="text-[10px] text-zinc-400">Afastamento da Vol. Implícita das puts da média histórica</div>
-                      </td>
-                      <td className="px-5 py-4 font-mono font-bold text-zinc-950">
-                        <span className={`px-2 py-0.5 rounded text-xs ${ivZScore < -1.0 ? "bg-rose-50 text-rose-700 font-extrabold font-mono" : "bg-zinc-50 text-zinc-600 font-mono"}`}>
-                          {ivZScore.toFixed(2)}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 font-semibold text-zinc-700 font-mono text-xs">
-                        &lt; -1.0
-                      </td>
-                      <td className="px-5 py-4 text-xs text-zinc-650">
-                        Desmontar Put (Evita perda por Vol Crush)
-                      </td>
-                    </tr>
-
-                    {/* Linha Delta Líquido */}
-                    <tr className="hover:bg-zinc-50">
-                      <td className="px-5 py-4">
-                        <div className="font-semibold text-zinc-900 text-xs uppercase tracking-wider font-mono">Delta Líquido (&Delta;<sub>net</sub>)</div>
-                        <div className="text-[10px] text-zinc-400">Risco direcional consolidado da carteira collar</div>
-                      </td>
-                      <td className="px-5 py-4 font-mono font-bold text-zinc-950">
-                        <span className={`px-2 py-0.5 rounded text-xs ${(netDeltaPerShare < 0.35 || netDeltaPerShare > 0.65) ? "bg-amber-50 text-amber-700 font-extrabold font-mono" : "bg-zinc-50 text-zinc-600 font-mono"}`}>
-                          {netDeltaPerShare.toFixed(3)}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 font-semibold text-zinc-700 font-mono text-xs">
-                        &lt; 0.35 ou &gt; 0.65
-                      </td>
-                      <td className="px-5 py-4 text-xs text-zinc-650">
-                        Ajustar Strikes (Rebalanceamento do Hedge Direcional)
-                      </td>
-                    </tr>
-
-                  </tbody>
-                </table>
-              </div>
-              <div className="p-3 bg-zinc-50 border-t border-zinc-100 text-[10px] text-zinc-400 leading-relaxed text-center font-mono">
-                Métricas atualizadas automaticamente. Preço corrente de BBDC4: R$ {livePrice.toFixed(2)}.
-              </div>
-            </div>
-
-
-            {/* Painel do Sinal Operacional (ocupa 1 coluna) */}
-            <div className={`border rounded-xl overflow-hidden shadow-sm flex flex-col justify-between ${signalColorClass.split(" ")[0]} ${signalColorClass.split(" ")[1]}`}>
-              <div className={`p-4 border-b border-slate-200 text-white font-black text-xs tracking-wider flex justify-between items-center ${signalColorClass.split(" ")[3]}`}>
-                <span>RECOMENDAÇÃO OPERACIONAL</span>
-                <span className="w-2.5 h-2.5 bg-white rounded-full animate-ping" />
-              </div>
-              
-              <div className="p-5 flex-1 flex flex-col gap-4">
-                {/* Status + Ação */}
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Status do Algoritmo</span>
-                  <span className="text-base font-black tracking-tight text-slate-900 block mt-0.5">
-                    {signalTitle}
-                  </span>
-                  <span className="text-xs font-semibold text-indigo-700 mt-1 block">{signalAction}</span>
-                </div>
-
-                {/* Nota de contexto */}
-                {signalNote && (
-                  <div className="px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] font-semibold text-amber-800 leading-snug">
-                    {signalNote}
-                  </div>
-                )}
-
-                {/* Order Ticket */}
-                <div className="rounded-xl border border-slate-200 overflow-hidden bg-white shadow-inner">
-                  <div className="px-4 py-2 bg-slate-800 flex items-center justify-between">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">📋 Ordens Home Broker — BBDC4 Collar</span>
-                    <span className="text-[10px] font-mono text-slate-400">Qtd base: {qty.toLocaleString("pt-BR")}</span>
-                  </div>
-
-                  {orderLegs.length === 0 ? (
-                    <div className="px-4 py-5 text-center">
-                      <span className="text-2xl block mb-1">✅</span>
-                      <span className="text-xs font-bold text-slate-500 block">Nenhuma ordem necessária</span>
-                      <span className="text-[10px] text-slate-400 mt-0.5 block">Robô monitorando crossovers KAMA</span>
-                    </div>
-                  ) : (
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200">
-                          <th className="px-3 py-2 text-left text-[9px] uppercase tracking-wider text-slate-400 font-bold">Ação</th>
-                          <th className="px-3 py-2 text-left text-[9px] uppercase tracking-wider text-slate-400 font-bold">Ativo</th>
-                          <th className="px-3 py-2 text-right text-[9px] uppercase tracking-wider text-slate-400 font-bold">Qtd</th>
-                          <th className="px-3 py-2 text-right text-[9px] uppercase tracking-wider text-slate-400 font-bold">Strike</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {orderLegs.map((leg, i) => (
-                          <tr key={i} className={leg.color === "red" ? "bg-rose-50" : leg.color === "green" ? "bg-emerald-50" : "bg-white"}>
-                            <td className="px-3 py-2.5">
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black tracking-wider border ${
-                                leg.action === "VENDA"
-                                  ? "bg-rose-100 text-rose-700 border-rose-300"
-                                  : "bg-emerald-100 text-emerald-700 border-emerald-300"
-                              }`}>
-                                {leg.action === "VENDA" ? "▼" : "▲"} {leg.action}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2.5">
-                              <div className="font-black text-slate-900 tracking-tight">{leg.ticker}</div>
-                              <div className="text-[9px] text-slate-400 mt-0.5 leading-tight">{leg.nature}</div>
-                            </td>
-                            <td className="px-3 py-2.5 text-right">
-                              <span className="font-black font-mono text-slate-800">{leg.qty.toLocaleString("pt-BR")}</span>
-                            </td>
-                            <td className="px-3 py-2.5 text-right">
-                              <span className="font-mono font-bold text-slate-600">R$ {leg.strike.toFixed(2)}</span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-
-                {/* Rodapé */}
-                <div className="pt-2 border-t border-slate-200/60 flex justify-between items-center text-[10px] text-slate-400">
-                  <span className="font-semibold text-slate-500">Δ Líquido: {totalNetDelta >= 0 ? "+" : ""}{Math.round(totalNetDelta)} ações ({(hedgeRatio).toFixed(1)}% hedgeado)</span>
-                  <span className="flex items-center gap-1 font-semibold text-emerald-600 font-mono text-[9px]">
-                    <span className={`w-1.5 h-1.5 rounded-full ${isFetchingQuotes ? "bg-amber-500 animate-pulse" : "bg-emerald-500 animate-ping"}`} />
-                    {isFetchingQuotes ? "ATUALIZANDO..." : "B3 LIVE"}
-                  </span>
-
-                </div>
-              </div>
-            </div>
-
-          </div>
-        </section>
-
-        {/* Gráfico Teórico PnL */}
-        <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm mb-8">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">Curva de Payoff Teórico no Vencimento</h2>
-              <p className="text-xs text-slate-400">Comparação visual do retorno do Collar contra a posição Long em Ações Puras</p>
-            </div>
-            
-            <div className="flex gap-4 text-xs font-semibold">
-              <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-indigo-600 inline-block" /> Portfólio com Hedge (Collar)</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-slate-300 border-dashed border inline-block" /> Ações Puras (Sem Hedge)</span>
-            </div>
-          </div>
-          
-          <div className="h-[380px] w-full">
-            {!isMounted ? (
-              <div className="h-full w-full flex items-center justify-center text-zinc-400">
-                Carregando gráfico...
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 20, right: 20, left: 10, bottom: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis 
-                    dataKey="price" 
-                    stroke="#94a3b8" 
-                    tickFormatter={(val) => `R$ ${val}`} 
-                    fontSize={11}
-                    tickMargin={10}
-                  />
-                  <YAxis 
-                    stroke="#94a3b8" 
-                    tickFormatter={(val) => `R$ ${val}`} 
-                    fontSize={11}
-                    tickMargin={10}
-                  />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: "#ffffff", borderColor: "#e2e8f0", borderRadius: "8px", fontSize: "12px", color: "#0f172a", boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)" }}
-                    formatter={(value: any) => [`R$ ${value}`, ""]}
-                    labelFormatter={(label) => `Preço de BBDC4: R$ ${label}`}
-                  />
-                  
-                  {/* Linha da Proteção (Put Strike) */}
-                  {putStrike && (
-                    <ReferenceLine 
-                      x={putStrike} 
-                      stroke="#10b981" 
-                      strokeDasharray="3 3"
-                      label={{ value: "Piso (Put K)", fill: "#047857", position: "top", fontSize: 10, fontWeight: "bold" }} 
-                    />
-                  )}
-                  
-                  {/* Linha do Preço de Entrada */}
-                  <ReferenceLine 
-                    x={entryPrice} 
-                    stroke="#6366f1" 
-                    strokeDasharray="3 3"
-                    label={{ value: "Entrada (R$ 17,80)", fill: "#4f46e5", position: "top", fontSize: 10, fontWeight: "bold" }} 
-                  />
-
-                  {/* Linha do Limite de Lucro (Call Strike) */}
-                  {callStrike && (
-                    <ReferenceLine 
-                      x={callStrike} 
-                      stroke="#f59e0b" 
-                      strokeDasharray="3 3"
-                      label={{ value: "Teto (Call K)", fill: "#b45309", position: "top", fontSize: 10, fontWeight: "bold" }} 
-                    />
-                  )}
-
-                  {/* Linha do Preço Simulado Atual */}
-                  <ReferenceLine 
-                    x={simulatedPrice} 
-                    stroke="#a855f7" 
-                    strokeWidth={2}
-                    label={{ value: `R$ ${simulatedPrice.toFixed(2)}`, fill: "#7e22ce", position: "bottom", fontSize: 11, fontWeight: "bold" }} 
-                  />
-
-                  <Line 
-                    type="monotone" 
-                    dataKey="Retorno com Hedge (Collar)" 
-                    stroke="#4f46e5" 
-                    strokeWidth={2.5} 
-                    dot={false} 
-                    activeDot={{ r: 6 }}
-                  />
-                  <Line 
-                    type="monotone" 
-                    dataKey="Retorno sem Hedge (Long)" 
-                    stroke="#cbd5e1" 
-                    strokeWidth={1.5} 
-                    strokeDasharray="5 5" 
-                    dot={false} 
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </section>
-
-        {/* Tabela de Cenários */}
-        <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
-          <div className="mb-6">
-            <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Grade Completa de Cenários no Vencimento</h2>
-            <p className="text-xs text-zinc-400">Mapeamento matemático dos retornos e valores das opções para diferentes preços de vencimento</p>
-          </div>
-          
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left text-zinc-500">
-              <thead className="text-[10px] uppercase tracking-wider text-zinc-400 bg-zinc-50 border-b border-zinc-200">
-                <tr>
-                  <th scope="col" className="px-6 py-4 font-bold">Preço do Ativo</th>
-                  <th scope="col" className="px-6 py-4 font-bold">Valor das Ações</th>
-                  <th scope="col" className="px-6 py-4 font-bold text-zinc-900">Valor com Hedge</th>
-                  <th scope="col" className="px-6 py-4 font-bold text-zinc-650">Resultado Ação Pura</th>
-                  <th scope="col" className="px-6 py-4 font-bold text-emerald-600">PnL da PUT</th>
-                  <th scope="col" className="px-6 py-4 font-bold text-rose-600">PnL da CALL</th>
-                  <th scope="col" className="px-6 py-4 font-bold">Custo do Hedge</th>
-                  <th scope="col" className="px-6 py-4 font-bold text-zinc-900">Retorno Líquido Collar</th>
-                  <th scope="col" className="px-6 py-4 font-bold">Resultado (%)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-150">
-                {fixedScenarios.map((price, idx) => {
-                  const s = calculateScenario(price);
-                  const isCurrent = Math.abs(simulatedPrice - price) < 0.05;
-                  const isPutStrike = price === putStrike;
-                  const isCallStrike = price === callStrike;
-                  const isEntry = price === entryPrice;
-
-                  let rowBgClass = "hover:bg-zinc-50/50";
-                  
-                  if (isCurrent) {
-                    rowBgClass = "bg-zinc-100 hover:bg-zinc-200/80 border-l-2 border-zinc-900 text-zinc-950 font-semibold";
-                  } else if (isPutStrike) {
-                    rowBgClass = "bg-zinc-50 hover:bg-zinc-100 border-l-2 border-zinc-500 text-zinc-800";
-                  } else if (isCallStrike) {
-                    rowBgClass = "bg-zinc-50 hover:bg-zinc-100 border-l-2 border-zinc-500 text-zinc-800";
-                  } else if (isEntry) {
-                    rowBgClass = "bg-zinc-50 hover:bg-zinc-100 border-l-2 border-zinc-500 text-zinc-800";
-                  }
-
-                  return (
-                    <tr key={idx} className={`transition-colors duration-150 ${rowBgClass}`}>
-                      <td className="px-6 py-4 font-mono font-bold text-zinc-900">
-                        R$ {price.toFixed(2)}
-                        {isCurrent && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider bg-zinc-200 text-zinc-700">Simulado</span>}
-                        {isPutStrike && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-650">Put Strike</span>}
-                        {isCallStrike && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-650">Call Strike</span>}
-                        {isEntry && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-650">Entrada</span>}
-                      </td>
-                      <td className="px-6 py-4 font-mono">
-                        R$ {s.stockVal.toLocaleString("pt-BR", {minimumFractionDigits: 2})}
-                      </td>
-                      <td className="px-6 py-4 font-mono font-semibold text-zinc-800">
-                        R$ {s.totalVal.toLocaleString("pt-BR", {minimumFractionDigits: 2})}
-                      </td>
-                      <td className={`px-6 py-4 font-mono font-semibold ${s.stockPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                        {s.stockPL >= 0 ? "+" : ""}R$ {Math.round(s.stockPL).toLocaleString("pt-BR")} ({s.unhedgedReturnPercent >= 0 ? "+" : ""}{s.unhedgedReturnPercent.toFixed(2)}%)
-                      </td>
-                      <td className={`px-6 py-4 font-mono font-medium ${s.putPL >= 0 ? "text-emerald-600" : "text-zinc-400"}`}>
-                        {s.putPL >= 0 ? "+" : ""}R$ {Math.round(s.putPL).toLocaleString("pt-BR")}
-                      </td>
-                      <td className={`px-6 py-4 font-mono font-medium ${s.callPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                        {s.callPL >= 0 ? "+" : ""}R$ {Math.round(s.callPL).toLocaleString("pt-BR")}
-                      </td>
-                      <td className="px-6 py-4 font-mono text-zinc-400">
-                        -R$ {Math.round(netCost * qty)}
-                      </td>
-                      <td className={`px-6 py-4 font-mono font-bold ${s.totalPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                        {s.totalPL >= 0 ? "+" : ""}R$ {Math.round(s.totalPL).toLocaleString("pt-BR")}
-                      </td>
-                      <td className={`px-6 py-4 font-mono font-bold ${s.totalPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                        {s.netReturnPercent >= 0 ? "+" : ""}{s.netReturnPercent.toFixed(2)}%
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-      </main>
-        </>
+        </main>
       )}
       
       {/* Footer */}
