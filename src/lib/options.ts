@@ -55,8 +55,8 @@ export async function fetchSelectedCollarOptions(): Promise<SelectedCollar> {
   }
 
   // 1. Encontra o vencimento alvo
-  // Pega mensal (m === true) com 15 <= du <= 45
-  let targetExp = expirations.find((exp: any) => exp.du >= 15 && exp.du <= 45 && exp.m === true);
+  // Pega mensal (m === true/1) com 15 <= du <= 45
+  let targetExp = expirations.find((exp: any) => exp.du >= 15 && exp.du <= 45 && !!exp.m);
   
   // Se não achar mensal puro, relaxa o filtro de mensal
   if (!targetExp) {
@@ -222,7 +222,7 @@ export async function fetchActiveOptionsQuotes(
           const expirations = optionsChain.expirations || [];
 
           // 1. Encontra vencimento alvo mensal (15 <= du <= 45)
-          let targetExp = expirations.find((exp: any) => exp.du >= 15 && exp.du <= 45 && exp.m === true);
+          let targetExp = expirations.find((exp: any) => exp.du >= 15 && exp.du <= 45 && !!exp.m);
           if (!targetExp) {
             targetExp = expirations.find((exp: any) => exp.du >= 15 && exp.du <= 45);
           }
