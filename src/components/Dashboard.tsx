@@ -84,6 +84,8 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   const [liveWinPrice, setLiveWinPrice] = useState(winLivePrice);
   const [liveState, setLiveState] = useState(initialState);
   const [isFetchingQuotes, setIsFetchingQuotes] = useState(false);
+  const [liveCustody, setLiveCustody] = useState<any[] | null>(null);
+  const [liveWinTicker, setLiveWinTicker] = useState("WINQ26");
 
   const state = liveState || {
     hedge_active: true,
@@ -118,6 +120,27 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   useEffect(() => {
     let intervalId: any;
     if (isMounted) {
+      // Executa uma vez imediatamente ao montar
+      const fetchInitial = async () => {
+        try {
+          setIsFetchingQuotes(true);
+          const res = await fetch("/api/quotes");
+          if (res.ok) {
+            const data = await res.json();
+            if (data.activeQuotes) setLiveQuotes(data.activeQuotes);
+            if (data.winLivePrice !== undefined) setLiveWinPrice(data.winLivePrice);
+            if (data.winTicker) setLiveWinTicker(data.winTicker);
+            if (data.clearCustody) setLiveCustody(data.clearCustody);
+            if (data.state) setLiveState(data.state);
+          }
+        } catch (error) {
+          console.error("Erro ao buscar cotações iniciais:", error);
+        } finally {
+          setIsFetchingQuotes(false);
+        }
+      };
+      fetchInitial();
+
       intervalId = setInterval(async () => {
         try {
           setIsFetchingQuotes(true);
@@ -129,6 +152,12 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             }
             if (data.winLivePrice !== undefined) {
               setLiveWinPrice(data.winLivePrice);
+            }
+            if (data.winTicker) {
+              setLiveWinTicker(data.winTicker);
+            }
+            if (data.clearCustody) {
+              setLiveCustody(data.clearCustody);
             }
             if (data.state) {
               setLiveState(data.state);
@@ -146,13 +175,55 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
     };
   }, [isMounted]);
 
-  const qty = state.quantity;
-  const entryPrice = state.activation_price;
-  const putStrike = state.active_put_strike;
-  const callStrike = state.active_call_strike;
-  const putCost = state.active_put_ticker ? state.put_premium_paid : 0.0;
-  const callIncome = state.call_premium_received;
-  const netCost = state.net_premium_cost;
+  // Parâmetros da Posição com possibilidade de sobreposição dinâmica via custódia da Clear
+  let qty = state.quantity;
+  let entryPrice = state.activation_price;
+  let putTicker: string | null = state.active_put_ticker;
+  let putStrike: number | null = state.active_put_strike;
+  let callTicker: string | null = state.active_call_ticker;
+  let callStrike: number | null = state.active_call_strike;
+  let isHedgeActive = state.hedge_active;
+
+  if (liveCustody && liveCustody.length > 0) {
+    const custodyBbdc4 = liveCustody.find((item: any) => item.ticker === "BBDC4");
+    if (custodyBbdc4 && custodyBbdc4.availableQuantity > 0) {
+      qty = custodyBbdc4.availableQuantity;
+      entryPrice = custodyBbdc4.averageCost || entryPrice;
+    }
+
+    // Busca Put ativa na custódia
+    const custodyPut = liveCustody.find((item: any) => 
+      item.ticker.startsWith("BBDC") && 
+      (item.ticker.includes("S") || item.ticker.includes("T") || item.ticker.includes("U") || item.ticker.includes("V") || item.ticker.includes("W") || item.ticker.includes("X") || item.ticker.includes("Y")) &&
+      item.availableQuantity > 0
+    );
+    if (custodyPut) {
+      putTicker = custodyPut.ticker;
+      isHedgeActive = true;
+    } else {
+      putTicker = null;
+      putStrike = null;
+      isHedgeActive = false;
+    }
+
+    // Busca Call ativa na custódia
+    const custodyCall = liveCustody.find((item: any) => 
+      item.ticker.startsWith("BBDC") && 
+      (item.ticker.includes("G") || item.ticker.includes("H") || item.ticker.includes("I") || item.ticker.includes("J") || item.ticker.includes("K") || item.ticker.includes("L") || item.ticker.includes("A") || item.ticker.includes("B") || item.ticker.includes("C") || item.ticker.includes("D") || item.ticker.includes("E") || item.ticker.includes("F")) &&
+      (item.availableQuantity > 0 || item.collateralBlockedQuantity > 0 || item.averageCost > 0)
+    );
+    if (custodyCall) {
+      callTicker = custodyCall.ticker;
+    } else {
+      callTicker = null;
+      callStrike = null;
+    }
+  }
+
+  // Preços de Custo originais ou ajustados
+  const putCost = putTicker ? (state.active_put_ticker === putTicker ? state.put_premium_paid : 0.28) : 0.0;
+  const callIncome = callTicker ? (state.active_call_ticker === callTicker ? state.call_premium_received : 0.09) : 0.0;
+  const netCost = putCost - callIncome;
 
   // Carrega última linha do histórico de métricas para o Monitor Quantitativo
   const latestMetric = initialHistory && initialHistory.length > 0 
@@ -182,31 +253,33 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   const currentRegime = state.regime || latestMetric.regime || "B";
 
   // Cotações e Gregas Ativas (Real-Time)
-  const putQuote = state.active_put_ticker 
+  const putQuote = putTicker 
     ? (liveQuotes?.put || {
-        ticker: state.active_put_ticker,
-        strike: state.active_put_strike || 17.39,
+        ticker: putTicker,
+        strike: putStrike || 17.39,
         price: 0.28,
         iv: 0.247,
         delta: -0.275
       }) 
     : null;
 
-  const callQuote = liveQuotes?.call || {
-    ticker: state.active_call_ticker || "BBDCG194",
-    strike: state.active_call_strike || 19.14,
-    price: 0.09,
-    iv: 0.213,
-    delta: 0.252
-  };
+  const callQuote = (liveQuotes?.call && liveQuotes.call.ticker === callTicker) 
+    ? liveQuotes.call 
+    : (callTicker ? {
+        ticker: callTicker,
+        strike: callStrike || 19.14,
+        price: 0.09,
+        iv: 0.213,
+        delta: 0.252
+      } : null);
 
   // Cálculo de Deltas e Exposição
   const stockDelta = 1.0;
   const putDelta = putQuote ? putQuote.delta : 0.0; // Delta negativo ou 0 se desmontado
-  const callDelta = callQuote.delta; // Delta positivo
+  const callDelta = callQuote ? callQuote.delta : 0.0; // Delta positivo
   
   // Delta líquido do Collar por ação
-  const netDeltaPerShare = state.hedge_active 
+  const netDeltaPerShare = isHedgeActive 
     ? (stockDelta + putDelta - callDelta) 
     : 1.0;
     
@@ -218,25 +291,25 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   const distToKama = ((livePrice - currentKAMA) / currentKAMA) * 100;
 
   // Cálculo de Skew do Smile (Put IV - Call IV)
-  const smileSkew = ((putQuote?.iv || 0.247) - callQuote.iv) * 100;
+  const smileSkew = ((putQuote?.iv || 0.247) - (callQuote ? callQuote.iv : 0.213)) * 100;
 
   // Cálculo do PnL Real-Time Atual (preços marcados a mercado)
   const currentPutVal = putQuote ? (putQuote.price * qty) : 0.0;
-  const currentCallVal = callQuote.price * qty;
+  const currentCallVal = callQuote ? (callQuote.price * qty) : 0.0;
   
-  const initialPutVal = state.active_put_ticker ? (state.put_premium_paid * qty) : 0.0;
-  const initialCallVal = state.call_premium_received * qty;
+  const initialPutVal = putTicker ? (putCost * qty) : 0.0;
+  const initialCallVal = callTicker ? (callIncome * qty) : 0.0;
 
-  const currentPutPL = (state.hedge_active && state.active_put_ticker) ? (currentPutVal - initialPutVal) : 0;
-  const currentCallPL = state.hedge_active ? (initialCallVal - currentCallVal) : 0; // Venda de call: ganha se o preço cai
+  const currentPutPL = (isHedgeActive && putTicker) ? (currentPutVal - initialPutVal) : 0;
+  const currentCallPL = isHedgeActive ? (initialCallVal - currentCallVal) : 0; // Venda de call: ganha se o preço cai
   
-  const currentStockPL = (simulatedPrice - state.activation_price) * qty;
+  const currentStockPL = (simulatedPrice - entryPrice) * qty;
 
   const currentTotalPL = currentStockPL + currentPutPL + currentCallPL;
-  const currentReturnPercent = (currentTotalPL / (state.activation_price * qty)) * 100;
+  const currentReturnPercent = (currentTotalPL / (entryPrice * qty)) * 100;
 
   // Preços e Resultados Real-Time baseados no preço atual real (não simulado)
-  const liveStockPL = (livePrice - state.activation_price) * qty;
+  const liveStockPL = (livePrice - entryPrice) * qty;
   const liveTotalPL = liveStockPL + currentPutPL + currentCallPL;
 
   // Z-Score da Volatilidade Implícita das Puts (Z-Score de IV 20d)
@@ -378,16 +451,18 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   // Calculadora de Cenários
   const calculateScenario = (price: number) => {
     const stockPL = (price - entryPrice) * qty;
-    const putPL = state.active_put_ticker 
-      ? (Math.max(0, (state.active_put_strike || 0) - price) - putCost) * qty
+    const putPL = putTicker 
+      ? (Math.max(0, (putStrike || 0) - price) - putCost) * qty
       : 0.0;
-    const callPL = (callIncome - Math.max(0, price - callStrike)) * qty;
+    const callPL = callTicker 
+      ? (callIncome - Math.max(0, price - (callStrike || 0))) * qty
+      : 0.0;
     const optionsPL = putPL + callPL;
     const totalPL = stockPL + optionsPL;
     
     const stockVal = price * qty;
-    const optionsVal = ((state.active_put_ticker ? Math.max(0, (state.active_put_strike || 0) - price) : 0.0) 
-      - Math.max(0, price - callStrike)) * qty;
+    const optionsVal = ((putTicker ? Math.max(0, (putStrike || 0) - price) : 0.0) 
+      - (callTicker ? Math.max(0, price - (callStrike || 0)) : 0.0)) * qty;
     const totalVal = stockVal + optionsVal;
     
     const netReturnPercent = (totalPL / (entryPrice * qty)) * 100;
@@ -426,23 +501,23 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
     15.50,
     16.50,
     17.00,
-    ...(state.active_put_strike ? [state.active_put_strike] : []),
+    ...(putStrike ? [putStrike] : []),
     livePrice,
     entryPrice,
     18.50,
-    callStrike,
+    ...(callStrike ? [callStrike] : []),
     20.00,
     21.00
   ])).sort((a, b) => a - b);
 
   const getStatusBadge = () => {
-    if (state.active_put_strike && simulatedPrice <= state.active_put_strike) {
+    if (putStrike && simulatedPrice <= putStrike) {
       return (
         <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
           <ShieldCheck className="h-3 w-3 mr-1.5" /> Proteção Ativada (Loss Limitado)
         </span>
       );
-    } else if (simulatedPrice >= callStrike) {
+    } else if (callStrike && simulatedPrice >= callStrike) {
       return (
         <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
           <AlertTriangle className="h-3 w-3 mr-1.5" /> Lucro Máximo Atingido (Cap)
@@ -450,8 +525,8 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
       );
     } else {
       return (
-        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-          <ArrowRightLeft className="h-3 w-3 mr-1.5" /> {state.active_put_ticker ? "Flutuação Livre (Zona Collar)" : "Exposição Direcional (Sem Put)"}
+        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-zinc-50 text-zinc-700 border border-zinc-200 font-mono">
+          <ArrowRightLeft className="h-3 w-3 mr-1.5 text-zinc-500" /> {putTicker ? "Flutuação Livre (Zona Collar)" : "Exposição Direcional (Sem Put)"}
         </span>
       );
     }
@@ -506,9 +581,11 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                 </h1>
               </div>
               
-              <div className="flex flex-col md:text-right">
-                <span className="text-xs text-zinc-400">Ativo de Referência</span>
-                <span className="text-sm font-semibold text-zinc-700">Mini Índice Futuro</span>
+              <div className="flex flex-col md:text-right font-mono">
+                <span className="text-xs text-zinc-400 font-sans">Série Ativa ({liveWinTicker})</span>
+                <span className="text-sm font-semibold text-zinc-700">
+                  {liveWinPrice ? `${liveWinPrice.toLocaleString("pt-BR")} pts` : "Carregando..."}
+                </span>
               </div>
             </header>
             <LongShortWin
@@ -565,31 +642,52 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             <div className="space-y-4">
               <div className="flex justify-between items-center py-2 border-b border-zinc-100">
                 <span className="text-zinc-500 text-sm">Ações BBDC4</span>
-                <span className="font-mono text-sm font-semibold text-zinc-900">{qty.toLocaleString("pt-BR")} Qtd @ R$ {entryPrice.toFixed(2)}</span>
+                <span className="font-mono text-sm font-semibold text-zinc-900 flex flex-col items-end">
+                  <span>{qty.toLocaleString("pt-BR")} Qtd @ R$ {entryPrice.toFixed(2)}</span>
+                  {liveQuotes?.underlyingPrice && (
+                    <span className="text-[10px] font-normal text-zinc-500">
+                      Mkt: R$ {liveQuotes.underlyingPrice.toFixed(2)}
+                    </span>
+                  )}
+                </span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-zinc-100">
                 <span className="text-zinc-500 text-sm">Put Long (Proteção)</span>
-                <span className="font-mono text-sm font-semibold text-emerald-600">
-                  {state.active_put_ticker 
-                    ? `${state.active_put_ticker} (K: R$ ${state.active_put_strike?.toFixed(2)})` 
-                    : "DESMONTADA (Regime A)"}
+                <span className="font-mono text-sm font-semibold text-emerald-600 flex flex-col items-end">
+                  <span>{putTicker ? `${putTicker} (K: R$ ${putStrike?.toFixed(2)})` : "DESMONTADA"}</span>
+                  {putQuote?.price ? (
+                    <span className="text-[10px] font-normal text-zinc-500">
+                      Mkt: R$ {putQuote.price.toFixed(2)}
+                    </span>
+                  ) : null}
                 </span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-zinc-100">
                 <span className="text-zinc-500 text-sm">Call Short (Financ.)</span>
-                <span className="font-mono text-sm font-semibold text-zinc-800">{state.active_call_ticker} (K: R$ {callStrike.toFixed(2)})</span>
+                <span className="font-mono text-sm font-semibold text-zinc-800 flex flex-col items-end">
+                  <span>{callTicker ? `${callTicker} (K: R$ ${callStrike?.toFixed(2)})` : "NENHUMA"}</span>
+                  {callQuote?.price ? (
+                    <span className="text-[10px] font-normal text-zinc-500">
+                      Mkt: R$ {callQuote.price.toFixed(2)}
+                    </span>
+                  ) : null}
+                </span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-zinc-100">
                 <span className="text-zinc-500 text-sm">Prêmio da Put Pago</span>
                 <span className="font-mono text-sm font-semibold text-zinc-700">
-                  {state.active_put_ticker 
+                  {putTicker 
                     ? `R$ ${putCost.toFixed(2)} (- R$ ${Math.round(putCost * qty)})` 
                     : "R$ 0,00"}
                 </span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-zinc-100">
                 <span className="text-zinc-500 text-sm">Prêmio da Call Recebido</span>
-                <span className="font-mono text-sm font-semibold text-zinc-700">R$ {callIncome.toFixed(2)} (+ R$ {Math.round(callIncome * qty)})</span>
+                <span className="font-mono text-sm font-semibold text-zinc-700">
+                  {callTicker 
+                    ? `R$ ${callIncome.toFixed(2)} (+ R$ ${Math.round(callIncome * qty)})` 
+                    : "R$ 0,00"}
+                </span>
               </div>
               <div className="flex justify-between items-center pt-2">
                 <span className="text-zinc-500 text-sm">Custo Líquido do Hedge</span>
@@ -676,6 +774,48 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
           </div>
 
         </div>
+
+        {/* Custódia Real-Time (Clear API) */}
+        {liveCustody && liveCustody.length > 0 && (
+          <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs mb-8">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-zinc-100">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-zinc-500" />
+                <div>
+                  <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Posição Integrada Clear API</h2>
+                  <p className="text-xs text-zinc-400">Custódia detectada em tempo real diretamente na corretora Clear</p>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-zinc-100 text-zinc-650 border border-zinc-200">
+                SINCRO CORRETORA
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {liveCustody
+                .filter((item: any) => item.availableQuantity > 0 || item.collateralBlockedQuantity > 0 || item.ticker === "BBDC4" || item.ticker === "BBDCS2" || item.ticker === "BBDCG194")
+                .map((item: any, idx: number) => (
+                  <div key={idx} className="p-4 rounded-lg bg-zinc-50 border border-zinc-200 font-mono flex flex-col justify-between">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-zinc-400">{item.module || "Custódia"}</span>
+                      <div className="text-lg font-bold text-zinc-950 mt-1">{item.ticker}</div>
+                    </div>
+                    <div className="mt-4 space-y-1">
+                      <div className="flex justify-between text-xs text-zinc-600">
+                        <span>Quantidade:</span>
+                        <span className="font-bold text-zinc-900">{item.availableQuantity + item.collateralBlockedQuantity}</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-zinc-600">
+                        <span>Preço Médio:</span>
+                        <span className="text-zinc-700">R$ {item.averageCost?.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </section>
+        )}
+
         {/* Monitor Quantitativo de Sinais */}
         <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs mb-8">
           <div className="flex items-center gap-2 mb-6 pb-4 border-b border-zinc-100">
@@ -1059,9 +1199,9 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                   />
                   
                   {/* Linha da Proteção (Put Strike) */}
-                  {state.active_put_strike && (
+                  {putStrike && (
                     <ReferenceLine 
-                      x={state.active_put_strike} 
+                      x={putStrike} 
                       stroke="#10b981" 
                       strokeDasharray="3 3"
                       label={{ value: "Piso (Put K)", fill: "#047857", position: "top", fontSize: 10, fontWeight: "bold" }} 
@@ -1077,12 +1217,14 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                   />
 
                   {/* Linha do Limite de Lucro (Call Strike) */}
-                  <ReferenceLine 
-                    x={callStrike} 
-                    stroke="#f59e0b" 
-                    strokeDasharray="3 3"
-                    label={{ value: "Teto (Call K)", fill: "#b45309", position: "top", fontSize: 10, fontWeight: "bold" }} 
-                  />
+                  {callStrike && (
+                    <ReferenceLine 
+                      x={callStrike} 
+                      stroke="#f59e0b" 
+                      strokeDasharray="3 3"
+                      label={{ value: "Teto (Call K)", fill: "#b45309", position: "top", fontSize: 10, fontWeight: "bold" }} 
+                    />
+                  )}
 
                   {/* Linha do Preço Simulado Atual */}
                   <ReferenceLine 

@@ -659,3 +659,75 @@ export async function fetchClearQuote(ticker: string, token: string): Promise<nu
     return null;
   }
 }
+
+function getWednesdayClosestTo15(year: number, month: number): Date {
+  const date15 = new Date(year, month, 15);
+  const dayOfWeek = date15.getDay(); // 0 = Sun, 1 = Mon, ..., 3 = Wed, ...
+  const diff = 3 - dayOfWeek;
+  const wednesday = new Date(year, month, 15 + diff);
+  return wednesday;
+}
+
+export function getActiveWinTicker(date: Date = new Date()): string {
+  const year = date.getFullYear();
+  const month = date.getMonth(); // 0-indexed (0 = Jan, 11 = Dec)
+  
+  const codes = [
+    { month: 1, letter: "G" }, // Feb
+    { month: 3, letter: "J" }, // Apr
+    { month: 5, letter: "M" }, // Jun
+    { month: 7, letter: "Q" }, // Aug
+    { month: 9, letter: "V" }, // Oct
+    { month: 11, letter: "Z" } // Dec
+  ];
+  
+  let targetYear = year;
+  let codeLetter = "G";
+  
+  for (let i = 0; i < codes.length; i++) {
+    const c = codes[i];
+    const expiryWed = getWednesdayClosestTo15(year, c.month);
+    if (date <= expiryWed) {
+      codeLetter = c.letter;
+      break;
+    }
+    if (i === codes.length - 1) {
+      codeLetter = "G";
+      targetYear = year + 1;
+    }
+  }
+  
+  const yearSuffix = String(targetYear).slice(-2);
+  return `WIN${codeLetter}${yearSuffix}`;
+}
+
+export async function fetchClearCustody(token: string): Promise<any[]> {
+  const baseUrl = "https://variableincome-openapi.xpi.com.br/api";
+  const subscriptionKey = "54870a6e21e14a38adbcdb27ebb5f195";
+  const userAgent = "Smart-Trader-API Devs-Clear";
+  const url = `${baseUrl}/v1/custody`;
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Ocp-Apim-Subscription-Key": subscriptionKey,
+        "Authorization": `Bearer ${token}`,
+        "User-Agent": userAgent,
+      },
+      next: { revalidate: 5 }
+    });
+
+    if (!response.ok) {
+      console.warn("Falha ao buscar custódia da Clear API:", await response.text());
+      return [];
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Erro ao buscar custódia da Clear API:", error);
+    return [];
+  }
+}
+
+

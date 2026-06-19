@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getHedgeState } from "@/lib/db";
-import { fetchActiveOptionsQuotes, getClearAccessToken, fetchClearQuote } from "@/lib/options";
+import { fetchActiveOptionsQuotes, getClearAccessToken, fetchClearQuote, getActiveWinTicker, fetchClearCustody } from "@/lib/options";
 
 export const dynamic = "force-dynamic";
 
@@ -14,22 +14,28 @@ export async function GET() {
       state?.active_call_ticker ?? "BBDCG194"
     );
 
-    // Busca preço real do WIN via Clear API (usando IBOV como correspondente)
+    // Busca preço real do WIN via Clear API usando a série ativa do futuro (ex: WINQ26)
     let winLivePrice: number | null = null;
+    const winTicker = getActiveWinTicker();
+    let clearCustody: any[] | null = null;
+
     if (process.env.CLEAR_API_KEY && process.env.CLEAR_CLIENT_SECRET) {
       try {
         const clearToken = await getClearAccessToken(process.env.CLEAR_API_KEY, process.env.CLEAR_CLIENT_SECRET);
         if (clearToken) {
-          winLivePrice = await fetchClearQuote("IBOV", clearToken);
+          winLivePrice = await fetchClearQuote(winTicker, clearToken);
+          clearCustody = await fetchClearCustody(clearToken);
         }
       } catch (e) {
-        console.error("Falha ao carregar cotação do WIN via Clear API na rota /api/quotes:", e);
+        console.error(`Falha ao carregar cotações/custódia via Clear API na rota /api/quotes:`, e);
       }
     }
 
     return NextResponse.json({
       activeQuotes,
       winLivePrice,
+      winTicker,
+      clearCustody,
       state
     });
   } catch (error: any) {
