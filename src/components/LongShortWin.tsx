@@ -83,7 +83,8 @@ export default function LongShortWin({ initialState, livePriceFromClear }: LongS
   // ----------------------------------------------------
   
   // 1. Sinal KAMA
-  const scoreKama = currentPrice > kama ? 1 : -1;
+  const isBuy = currentPrice > kama;
+  const scoreKama = isBuy ? 1 : -1;
   // 2. Filtro RSI
   const scoreRsi = connorsRsi > 50 ? 1 : -1;
   // 3. Filtro Kalman
@@ -329,6 +330,107 @@ export default function LongShortWin({ initialState, livePriceFromClear }: LongS
         </div>
 
       </div>
+
+      {/* Detalhamento do Scoring Quantitativo */}
+      <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm relative overflow-hidden">
+        <div className="absolute top-0 left-0 h-1 w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500" />
+        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2 mb-6">
+          <Zap className="h-4 w-4 text-indigo-500" /> Detalhamento do Scoring Quantitativo (Hedge Fund Engine)
+        </h3>
+
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          
+          {/* Fator 1: KAMA */}
+          <div className="p-4 rounded-lg bg-slate-50 border border-slate-100 flex flex-col justify-between">
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-400">1. Sinal KAMA</span>
+              <div className="text-sm font-bold text-slate-800 mt-1">Preço vs KAMA</div>
+              <p className="text-[10px] text-slate-400 mt-1">WIN {currentPrice.toLocaleString()} vs KAMA {kama.toLocaleString()}</p>
+            </div>
+            <div className="mt-4 flex items-center justify-between">
+              <span className={`text-xs font-bold ${isBuy ? "text-emerald-600" : "text-rose-600"}`}>
+                {isBuy ? "Acima (+1)" : "Abaixo (-1)"}
+              </span>
+              <span className={`px-2 py-0.5 rounded text-xs font-mono font-bold ${isBuy ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                {isBuy ? "+1" : "-1"}
+              </span>
+            </div>
+          </div>
+
+          {/* Fator 2: Connors RSI */}
+          <div className="p-4 rounded-lg bg-slate-50 border border-slate-100 flex flex-col justify-between">
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-400">2. Momento RSI</span>
+              <div className="text-sm font-bold text-slate-800 mt-1">Connors RSI &gt; 50</div>
+              <p className="text-[10px] text-slate-400 mt-1">Valor Atual: {connorsRsi}</p>
+            </div>
+            <div className="mt-4 flex items-center justify-between">
+              <span className={`text-xs font-bold ${connorsRsi > 50 ? "text-emerald-600" : "text-rose-600"}`}>
+                {connorsRsi > 50 ? "Alta (+1)" : "Baixa (-1)"}
+              </span>
+              <span className={`px-2 py-0.5 rounded text-xs font-mono font-bold ${connorsRsi > 50 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                {connorsRsi > 50 ? "+1" : "-1"}
+              </span>
+            </div>
+          </div>
+
+          {/* Fator 3: Kalman Filter */}
+          <div className="p-4 rounded-lg bg-slate-50 border border-slate-100 flex flex-col justify-between">
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-400">3. Filtro de Kalman</span>
+              <div className="text-sm font-bold text-slate-800 mt-1">Tendência Kalman</div>
+              <p className="text-[10px] text-slate-400 mt-1">Kalman: {kalmanPrice.toLocaleString()} pts</p>
+            </div>
+            <div className="mt-4 flex items-center justify-between">
+              <span className={`text-xs font-bold ${kalmanTrend === "UP" ? "text-emerald-600" : "text-rose-600"}`}>
+                {kalmanTrend === "UP" ? "Alta (+1)" : "Baixa (-1)"}
+              </span>
+              <span className={`px-2 py-0.5 rounded text-xs font-mono font-bold ${kalmanTrend === "UP" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                {kalmanTrend === "UP" ? "+1" : "-1"}
+              </span>
+            </div>
+          </div>
+
+          {/* Filtro de Exaustão (Bollinger-KAMA) */}
+          <div className="p-4 rounded-lg bg-slate-50 border border-slate-100 flex flex-col justify-between">
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-400">4. Filtro de Exaustão</span>
+              <div className="text-sm font-bold text-slate-800 mt-1">Bandas de Bollinger</div>
+              <p className="text-[10px] text-slate-400 mt-1">Sup: {bollingerUpper.toLocaleString()} | Inf: {bollingerLower.toLocaleString()}</p>
+            </div>
+            <div className="mt-4 flex items-center justify-between">
+              <span className={`text-xs font-bold ${isOverbought || isOversold ? "text-amber-600" : "text-emerald-600"}`}>
+                {isOverbought ? "Exaustão Alta" : isOversold ? "Exaustão Baixa" : "Normal"}
+              </span>
+              <span className={`px-2 py-0.5 rounded text-xs font-bold ${isOverbought || isOversold ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>
+                {isOverbought || isOversold ? "Bloqueado" : "Livre"}
+              </span>
+            </div>
+          </div>
+
+          {/* Consolidado */}
+          <div className="p-4 rounded-lg bg-slate-900 border border-slate-800 text-white flex flex-col justify-between">
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-500">Sinal Consolidado</span>
+              <div className="text-sm font-bold mt-1">Decisão Final</div>
+              <p className="text-[10px] text-slate-400 mt-1">Score Total: {totalScore > 0 ? "+" : ""}{totalScore} pts</p>
+            </div>
+            <div className="mt-4 flex items-center justify-between">
+              <span className={`text-xs font-bold ${
+                decision === "COMPRA" ? "text-emerald-400" : decision === "VENDA" ? "text-rose-400" : "text-slate-400"
+              }`}>
+                {decision}
+              </span>
+              <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                decision === "COMPRA" ? "bg-emerald-500/20 text-emerald-400" : decision === "VENDA" ? "bg-rose-500/20 text-rose-400" : "bg-slate-800 text-slate-400"
+              }`}>
+                {decision !== "CAIXA" ? "Operar" : "Aguardar"}
+              </span>
+            </div>
+          </div>
+
+        </div>
+      </section>
 
       {/* Simulador Interativo */}
       <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
