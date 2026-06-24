@@ -124,14 +124,15 @@ export async function getHedgeState(): Promise<any> {
     hedge_active: true,
     activation_date: "2026-06-18",
     activation_price: 17.80,
-    active_put_ticker: "BBDCS2",
-    active_put_strike: 17.39,
-    active_call_ticker: "BBDCG194",
-    active_call_strike: 19.14,
-    quantity: 1000,
-    put_premium_paid: 0.28,
-    call_premium_received: 0.09,
-    net_premium_cost: 0.19
+    active_put_ticker: "BBDCS164",
+    active_put_strike: 16.39,
+    active_call_ticker: null,
+    active_call_strike: null,
+    quantity: 2000,
+    put_premium_paid: 0.06,
+    call_premium_received: 0.0,
+    net_premium_cost: 0.06,
+    transactions: []
   };
 }
 

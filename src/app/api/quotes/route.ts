@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getHedgeState, saveHedgeState } from "@/lib/db";
-import { fetchActiveOptionsQuotes, getClearAccessToken, fetchClearQuote, getActiveWinTicker, fetchClearCustody } from "@/lib/options";
+import { fetchActiveOptionsQuotes, getClearAccessToken, fetchClearQuote, getActiveWinTicker, fetchClearCustody, fetchClearOrders } from "@/lib/options";
 
 export const dynamic = "force-dynamic";
 
@@ -33,10 +33,10 @@ export async function GET() {
       state?.active_call_ticker ?? "BBDCG194"
     );
 
-    // Busca preço real do WIN via Clear API usando a série ativa do futuro (ex: WINQ26)
     let winLivePrice: number | null = null;
     const winTicker = getActiveWinTicker();
     let clearCustody: any[] | null = null;
+    let clearOrders: any[] | null = null;
 
     if (process.env.CLEAR_API_KEY && process.env.CLEAR_CLIENT_SECRET) {
       try {
@@ -44,14 +44,34 @@ export async function GET() {
         if (clearToken) {
           winLivePrice = await fetchClearQuote(winTicker, clearToken);
           clearCustody = await fetchClearCustody(clearToken);
+          clearOrders = await fetchClearOrders(clearToken);
         }
       } catch (e) {
-        console.error(`Falha ao carregar cotações/custódia via Clear API na rota /api/quotes:`, e);
+        console.error(`Falha ao carregar cotações/custódia/ordens via Clear API na rota /api/quotes:`, e);
       }
     }
 
     // Sincroniza o estado do banco com a custódia da Clear
     let stateChanged = false;
+    const todayStr = new Date().toISOString().split("T")[0];
+
+    if (state) {
+      const initialLength = state.transactions?.length || 0;
+      // Garante que só existam transações com status 'open' e limpa legado
+      state.transactions = (state.transactions || []).filter((t: any) => t.status === "open");
+      if (state.transactions.length !== initialLength) {
+        stateChanged = true;
+      }
+    }
+
+    const getOptionType = (ticker: string) => {
+      if (!ticker.startsWith("BBDC") || ticker.length <= 4) return null;
+      const letter = ticker[4].toUpperCase();
+      if (["M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"].includes(letter)) return "PUT";
+      if (["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"].includes(letter)) return "CALL";
+      return null;
+    };
+
     if (clearCustody && clearCustody.length > 0 && state) {
       // 1. Ações BBDC4
       const custodyBbdc4 = clearCustody.find((item: any) => item.ticker === "BBDC4");
@@ -66,44 +86,68 @@ export async function GET() {
         }
       }
 
-      const getOptionType = (ticker: string) => {
-        if (!ticker.startsWith("BBDC") || ticker.length <= 4) return null;
-        const letter = ticker[4].toUpperCase();
-        if (["M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"].includes(letter)) return "PUT";
-        if (["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"].includes(letter)) return "CALL";
-        return null;
-      };
+      // 2. Opções da Custódia
+      const optionCustodyItems = clearCustody.filter(item => {
+        const type = getOptionType(item.ticker);
+        return type !== null && (Math.abs(item.availableQuantity || 0) > 0 || Math.abs(item.collateralBlockedQuantity || 0) > 0);
+      });
 
-      // 2. Put
-      let custodyPut = clearCustody.find((item: any) => 
-        getOptionType(item.ticker) === "PUT" &&
-        (Math.abs(item.availableQuantity || 0) > 0 || Math.abs(item.collateralBlockedQuantity || 0) > 0)
-      );
-      if (!custodyPut) {
-        custodyPut = clearCustody.find((item: any) => 
-          getOptionType(item.ticker) === "PUT"
-        );
-      }
+      // Atualiza ou insere transações em aberto vindas da Clear
+      for (const item of optionCustodyItems) {
+        const type = getOptionType(item.ticker)!;
+        const qtyOption = Math.abs((item.availableQuantity || 0) + (item.collateralBlockedQuantity || 0));
+        const avgCost = item.averageCost || 0.0;
 
-      if (custodyPut) {
-        const qtyPut = (custodyPut.availableQuantity || 0) + (custodyPut.collateralBlockedQuantity || 0);
-        if (state.active_put_ticker !== custodyPut.ticker) {
-          state.active_put_ticker = custodyPut.ticker;
-          state.active_put_strike = activeQuotes?.put?.strike || state.active_put_strike || 17.39;
-          if (qtyPut > 0 && custodyPut.averageCost) {
-            state.put_premium_paid = custodyPut.averageCost;
-          }
-          state.hedge_active = qtyPut > 0;
+        let tx = state.transactions.find((t: any) => t.ticker === item.ticker && t.status === "open");
+        if (!tx) {
+          tx = {
+            ticker: item.ticker,
+            type: type,
+            action: type === "PUT" ? "COMPRA" : "VENDA",
+            qty: qtyOption,
+            entryPrice: avgCost,
+            closePrice: null,
+            status: "open",
+            entryDate: todayStr,
+            closeDate: null
+          };
+          state.transactions.push(tx);
           stateChanged = true;
         } else {
-          const shouldBeActive = qtyPut > 0;
-          if (state.hedge_active !== shouldBeActive) {
-            state.hedge_active = shouldBeActive;
+          if (tx.qty !== qtyOption || tx.entryPrice !== avgCost) {
+            tx.qty = qtyOption;
+            tx.entryPrice = avgCost;
             stateChanged = true;
           }
         }
+      }
+
+      // Remove posições encerradas (que estavam no state mas não vieram na Clear)
+      const openTickersInCustody = optionCustodyItems.map(item => item.ticker);
+      const preFilterLength = state.transactions.length;
+      state.transactions = state.transactions.filter((tx: any) => {
+        return openTickersInCustody.includes(tx.ticker);
+      });
+      if (state.transactions.length !== preFilterLength) {
+        stateChanged = true;
+      }
+
+      // 3. Atualiza campos legados ativos para compatibilidade com outras partes do sistema
+      const openPuts = state.transactions.filter((t: any) => t.type === "PUT" && t.status === "open");
+      const openCalls = state.transactions.filter((t: any) => t.type === "CALL" && t.status === "open");
+
+      if (openPuts.length > 0) {
+        const firstPut = openPuts[0];
+        const putStrikeVal = activeQuotes?.optionsLookup?.[firstPut.ticker]?.strike || state.active_put_strike || 17.39;
+        if (state.active_put_ticker !== firstPut.ticker || state.active_put_strike !== putStrikeVal || state.put_premium_paid !== firstPut.entryPrice || !state.hedge_active) {
+          state.active_put_ticker = firstPut.ticker;
+          state.active_put_strike = putStrikeVal;
+          state.put_premium_paid = firstPut.entryPrice;
+          state.hedge_active = true;
+          stateChanged = true;
+        }
       } else {
-        if (state.active_put_ticker !== null) {
+        if (state.active_put_ticker !== null || state.hedge_active !== false) {
           state.active_put_ticker = null;
           state.active_put_strike = null;
           state.put_premium_paid = 0.0;
@@ -112,25 +156,13 @@ export async function GET() {
         }
       }
 
-      // 3. Call
-      let custodyCall = clearCustody.find((item: any) => 
-        getOptionType(item.ticker) === "CALL" &&
-        (Math.abs(item.availableQuantity || 0) > 0 || Math.abs(item.collateralBlockedQuantity || 0) > 0)
-      );
-      if (!custodyCall) {
-        custodyCall = clearCustody.find((item: any) => 
-          getOptionType(item.ticker) === "CALL"
-        );
-      }
-
-      if (custodyCall) {
-        const qtyCall = (custodyCall.availableQuantity || 0) + (custodyCall.collateralBlockedQuantity || 0);
-        if (state.active_call_ticker !== custodyCall.ticker) {
-          state.active_call_ticker = custodyCall.ticker;
-          state.active_call_strike = activeQuotes?.call?.strike || state.active_call_strike || 19.14;
-          if (qtyCall > 0 && custodyCall.averageCost) {
-            state.call_premium_received = custodyCall.averageCost;
-          }
+      if (openCalls.length > 0) {
+        const firstCall = openCalls[0];
+        const callStrikeVal = activeQuotes?.optionsLookup?.[firstCall.ticker]?.strike || state.active_call_strike || 19.14;
+        if (state.active_call_ticker !== firstCall.ticker || state.active_call_strike !== callStrikeVal || state.call_premium_received !== firstCall.entryPrice) {
+          state.active_call_ticker = firstCall.ticker;
+          state.active_call_strike = callStrikeVal;
+          state.call_premium_received = firstCall.entryPrice;
           stateChanged = true;
         }
       } else {

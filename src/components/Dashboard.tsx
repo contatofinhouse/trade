@@ -43,6 +43,7 @@ interface DashboardProps {
     call_premium_received: number;
     net_premium_cost: number;
     regime?: "A" | "B";
+    transactions?: any[];
   };
   initialHistory: any[];
   activeQuotes?: {
@@ -58,7 +59,11 @@ interface DashboardProps {
     put_50?: { ticker: string; strike: number; price: number; iv: number; delta: number } | null;
     call_50?: { ticker: string; strike: number; price: number; iv: number; delta: number } | null;
     call_06?: { ticker: string; strike: number; price: number; iv: number; delta: number } | null;
+    put_06?: { ticker: string; strike: number; price: number; iv: number; delta: number } | null;
     du: number | null;
+    optionsLookup?: { [ticker: string]: { ticker: string; strike: number; price: number; iv: number; delta: number; expiration: string; type: "PUT" | "CALL" } };
+    liquidPuts?: any[];
+    liquidCalls?: any[];
   } | null;
   winIndicators?: {
     close_price: number;
@@ -84,18 +89,27 @@ const getOptionType = (ticker: string) => {
   if (["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"].includes(letter)) return "CALL";
   return null;
 };
-
 const getOptionDetails = (ticker: string, activeQuotes: any, state: any) => {
   if (!ticker.startsWith("BBDC") || ticker.length <= 4) return { strike: null, expiration: null };
   const letter = ticker[4].toUpperCase();
   
-  // Determine strike
+  // Try lookup in activeQuotes.optionsLookup first
+  if (activeQuotes?.optionsLookup?.[ticker]) {
+    const details = activeQuotes.optionsLookup[ticker];
+    return { 
+      strike: details.strike, 
+      expiration: details.expiration ? details.expiration.split("-").reverse().join("/") : null 
+    };
+  }
+
+  // Determine strike fallbacks
   let strike: number | null = null;
   if (ticker === "BBDCS2") strike = 17.39;
   else if (ticker === "BBDCG194") strike = 19.14;
   else if (ticker === "BBDCS167") strike = 16.89;
-  else if (ticker === state.active_put_ticker && state.active_put_strike) strike = state.active_put_strike;
-  else if (ticker === state.active_call_ticker && state.active_call_strike) strike = state.active_call_strike;
+  else if (ticker === "BBDCS164") strike = 16.64;
+  else if (state && ticker === state.active_put_ticker && state.active_put_strike) strike = state.active_put_strike;
+  else if (state && ticker === state.active_call_ticker && state.active_call_strike) strike = state.active_call_strike;
   else {
     if (ticker === activeQuotes?.put?.ticker) strike = activeQuotes.put.strike;
     else if (ticker === activeQuotes?.call?.ticker) strike = activeQuotes.call.strike;
@@ -131,7 +145,6 @@ const getOptionDetails = (ticker: string, activeQuotes: any, state: any) => {
 
   return { strike, expiration };
 };
-
 export default function Dashboard({ initialState, initialHistory, activeQuotes, winIndicators, winLivePrice, initialCustody, initialWinTicker }: DashboardProps) {
   const [isMounted, setIsMounted] = useState(false);
   const [activeTab, setActiveTab] = useState<"bbdc4" | "win">("bbdc4");
@@ -148,15 +161,16 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
     hedge_active: true,
     activation_date: "2026-06-18",
     activation_price: 17.80,
-    active_put_ticker: "BBDCS2",
-    active_put_strike: 17.39,
-    active_call_ticker: "BBDCG194",
-    active_call_strike: 19.14,
-    quantity: 1000,
-    put_premium_paid: 0.28,
-    call_premium_received: 0.09,
-    net_premium_cost: 0.19,
-    regime: "B"
+    active_put_ticker: "BBDCS164",
+    active_put_strike: 16.39,
+    active_call_ticker: null,
+    active_call_strike: null,
+    quantity: 2000,
+    put_premium_paid: 0.06,
+    call_premium_received: 0.0,
+    net_premium_cost: 0.06,
+    regime: "B",
+    transactions: []
   };
 
   useEffect(() => {
@@ -372,7 +386,51 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   let calculatedPutsPL = 0;
   let calculatedCallsPL = 0;
 
-  if (liveCustody && liveCustody.length > 0) {
+  if (state.transactions && state.transactions.length > 0) {
+    state.transactions.forEach((tx: any) => {
+      if (tx.status !== "open") return;
+      const type = tx.type; // "PUT" or "CALL"
+      const isOpen = true;
+      
+      // Determina cotação atual a mercado
+      let mktPrice = 0.0;
+      if (liveQuotes?.optionsLookup?.[tx.ticker]) {
+        mktPrice = liveQuotes.optionsLookup[tx.ticker].price;
+      } else if (type === "PUT" && putQuote && putQuote.ticker === tx.ticker) {
+        mktPrice = putQuote.price;
+      } else if (type === "CALL" && callQuote && callQuote.ticker === tx.ticker) {
+        mktPrice = callQuote.price;
+      } else {
+        mktPrice = tx.entryPrice;
+      }
+
+      // Calcula PnL
+      let itemPL = 0;
+      if (type === "PUT") {
+        itemPL = (mktPrice - tx.entryPrice) * tx.qty;
+        calculatedPutsPL += itemPL;
+      } else { // CALL (Short Call)
+        itemPL = (tx.entryPrice - mktPrice) * tx.qty;
+        calculatedCallsPL += itemPL;
+      }
+
+      const pnlPercent = (itemPL / (entryPrice * qty)) * 100;
+      const { strike, expiration } = getOptionDetails(tx.ticker, liveQuotes, state);
+
+      optionsInCustody.push({
+        ticker: tx.ticker,
+        type: `${type} ${tx.action === "COMPRA" ? "Long" : "Short"} (Ativa)`,
+        qty: tx.qty,
+        txQty: tx.qty,
+        avgPrice: tx.entryPrice,
+        mktPrice: mktPrice,
+        pnl: itemPL,
+        pnlPercent: pnlPercent,
+        strike: strike,
+        expiration: expiration
+      });
+    });
+  } else if (liveCustody && liveCustody.length > 0) {
     liveCustody.forEach((item: any) => {
       const type = getOptionType(item.ticker);
       if (!type) return;
@@ -652,96 +710,279 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   const isTransitionToA = currentRegime === "B" && totalScore >= 2;
   const isTransitionToB = currentRegime === "A" && totalScore <= -2;
 
+  // Busca alvos de rebalanceamento diretamente da lista de maior liquidez
+  let targetCall06 = null;
+  let minDiff06C = Infinity;
+  if (liveQuotes?.liquidCalls && liveQuotes.liquidCalls.length > 0) {
+    liveQuotes.liquidCalls.forEach((c: any) => {
+      const diff = Math.abs(c.delta - 0.065);
+      if (diff < minDiff06C) {
+        minDiff06C = diff;
+        targetCall06 = c;
+      }
+    });
+  }
+  if (!targetCall06) targetCall06 = liveQuotes?.call_06 || { ticker: "BBDCG200", strike: 20.00 };
+
+  let targetPut06 = null;
+  let minDiff06P = Infinity;
+  if (liveQuotes?.liquidPuts && liveQuotes.liquidPuts.length > 0) {
+    liveQuotes.liquidPuts.forEach((p: any) => {
+      const diff = Math.abs(p.delta - (-0.065));
+      if (diff < minDiff06P) {
+        minDiff06P = diff;
+        targetPut06 = p;
+      }
+    });
+  }
+  if (!targetPut06) targetPut06 = liveQuotes?.put_06 || { ticker: "BBDCS160", strike: 16.00 };
+
+  let targetPut50 = null;
+  let minDiff50P = Infinity;
+  if (liveQuotes?.liquidPuts && liveQuotes.liquidPuts.length > 0) {
+    liveQuotes.liquidPuts.forEach((p: any) => {
+      const diff = Math.abs(p.delta - (-0.50));
+      if (diff < minDiff50P) {
+        minDiff50P = diff;
+        targetPut50 = p;
+      }
+    });
+  }
+  if (!targetPut50) targetPut50 = liveQuotes?.put_50 || { ticker: "BBDCS175", strike: 17.50 };
+
+  let targetCall50 = null;
+  let minDiff50C = Infinity;
+  if (liveQuotes?.liquidCalls && liveQuotes.liquidCalls.length > 0) {
+    liveQuotes.liquidCalls.forEach((c: any) => {
+      const diff = Math.abs(c.delta - 0.50);
+      if (diff < minDiff50C) {
+        minDiff50C = diff;
+        targetCall50 = c;
+      }
+    });
+  }
+  if (!targetCall50) targetCall50 = liveQuotes?.call_50 || { ticker: "BBDCG175", strike: 17.50 };
+
   if (isTransitionToA) {
     needsAdjustment = true;
     signalTitle = "TRANSIÇÃO: ALTA (REGIME A)";
-    signalAction = "Desmontar Put + Rolar Call para OTM";
-    signalNote = `Score Multifatorial atingiu +2 ou mais (Preço R$ ${livePrice.toFixed(2)} > KAMA R$ ${currentKAMA.toFixed(2)}, TSMOM: ${currentTSMOM.toFixed(4)}, Vol Z-Score: ${currentZScore.toFixed(2)}). Reduzir proteção e aumentar exposição direcional.`;
+    signalAction = "Montar Collar de Alta";
+    signalNote = `Score Multifatorial atingiu +2 ou mais (Preço R$ ${livePrice.toFixed(2)} > KAMA R$ ${currentKAMA.toFixed(2)}, TSMOM: ${currentTSMOM.toFixed(4)}, Vol Z-Score: ${currentZScore.toFixed(2)}). Reduzir proteção e aumentar exposição direcional, mantendo apenas proteção de cauda (black swan).`;
 
-    const targetCallTicker = liveQuotes?.call_06?.ticker || "BBDCG200";
-    const targetCallStrike = liveQuotes?.call_06?.strike || 20.00;
+    const activePuts = optionsInCustody.filter(o => o.type.includes("PUT") && o.qty > 0);
+    const activeCalls = optionsInCustody.filter(o => o.type.includes("CALL") && o.qty > 0);
 
-    const activePut = optionsInCustody.find(o => o.type.includes("PUT") && o.qty > 0);
-    if (activePut) {
+    // Zerar puts ATM/OTM anteriores e comprar proteção de cauda
+    activePuts.forEach(p => {
       orderLegs.push({
         action: "VENDA",
-        ticker: activePut.ticker,
+        ticker: p.ticker,
         qty: qty,
-        strike: activePut.strike || 17.39,
-        nature: "Desmontar Put (Zerar Proteção)",
+        strike: p.strike || 17.39,
+        nature: "Desmontar Put Anterior",
         color: "red"
       });
-    }
+    });
+    orderLegs.push({
+      action: "COMPRA",
+      ticker: targetPut06.ticker,
+      qty: qty,
+      strike: targetPut06.strike,
+      nature: "Comprar Put OTM (Cauda / Black Swan)",
+      color: "green"
+    });
 
-    const activeCall = optionsInCustody.find(o => o.type.includes("CALL") && o.qty > 0);
-    if (activeCall) {
+    // Zerar calls anteriores e vender a Call OTM recomendada
+    activeCalls.forEach(c => {
       orderLegs.push({
         action: "COMPRA",
-        ticker: activeCall.ticker,
+        ticker: c.ticker,
         qty: qty,
-        strike: activeCall.strike || 19.14,
-        nature: "Recomprar Call Anterior (Encerrar)",
+        strike: c.strike || 19.14,
+        nature: "Recomprar Call Anterior",
         color: "green"
       });
-    }
-
+    });
     orderLegs.push({
       action: "VENDA",
-      ticker: targetCallTicker,
+      ticker: targetCall06.ticker,
       qty: qty,
-      strike: targetCallStrike,
-      nature: "Vender nova Call OTM (Delta ~ 0.06)",
+      strike: targetCall06.strike,
+      nature: "Vender Call OTM (Delta ~ 0.06)",
       color: "red"
     });
 
   } else if (isTransitionToB) {
     needsAdjustment = true;
     signalTitle = "TRANSIÇÃO: CAIXA (REGIME B)";
-    signalAction = "Montar Put ATM + Rolar Call para ATM";
-    signalNote = `Score Multifatorial caiu para -2 ou menos (Preço R$ ${livePrice.toFixed(2)} < KAMA R$ ${currentKAMA.toFixed(2)}, TSMOM: ${currentTSMOM.toFixed(4)}, Vol Z-Score: ${currentZScore.toFixed(2)}). Ativar proteção total da carteira.`;
+    signalAction = "Montar Collar ATM";
+    signalNote = `Score Multifatorial caiu para -2 ou menos (Preço R$ ${livePrice.toFixed(2)} < KAMA R$ ${currentKAMA.toFixed(2)}, TSMOM: ${currentTSMOM.toFixed(4)}, Vol Z-Score: ${currentZScore.toFixed(2)}). Ativar proteção total da carteira com derivativos ATM.`;
 
-    const targetPutTicker = liveQuotes?.put_50?.ticker || "BBDCS175";
-    const targetPutStrike = liveQuotes?.put_50?.strike || 17.50;
-    const targetCallTicker = liveQuotes?.call_50?.ticker || "BBDCG175";
-    const targetCallStrike = liveQuotes?.call_50?.strike || 17.50;
+    const activePuts = optionsInCustody.filter(o => o.type.includes("PUT") && o.qty > 0);
+    const activeCalls = optionsInCustody.filter(o => o.type.includes("CALL") && o.qty > 0);
 
+    // Zerar puts antigas e comprar Put ATM
+    activePuts.forEach(p => {
+      orderLegs.push({
+        action: "VENDA",
+        ticker: p.ticker,
+        qty: qty,
+        strike: p.strike || 17.39,
+        nature: "Desmontar Put Anterior",
+        color: "red"
+      });
+    });
     orderLegs.push({
       action: "COMPRA",
-      ticker: targetPutTicker,
+      ticker: targetPut50.ticker,
       qty: qty,
-      strike: targetPutStrike,
+      strike: targetPut50.strike,
       nature: "Comprar Put ATM (Delta ~ -0.50)",
       color: "green"
     });
 
-    const activeCall = optionsInCustody.find(o => o.type.includes("CALL") && o.qty > 0);
-    if (activeCall) {
+    // Zerar calls antigas e vender Call ATM
+    activeCalls.forEach(c => {
       orderLegs.push({
         action: "COMPRA",
-        ticker: activeCall.ticker,
+        ticker: c.ticker,
         qty: qty,
-        strike: activeCall.strike || 19.14,
-        nature: "Recomprar Call Anterior (Encerrar)",
+        strike: c.strike || 19.14,
+        nature: "Recomprar Call Anterior",
         color: "green"
       });
-    }
-
+    });
     orderLegs.push({
       action: "VENDA",
-      ticker: targetCallTicker,
+      ticker: targetCall50.ticker,
       qty: qty,
-      strike: targetCallStrike,
-      nature: "Vender nova Call ATM (Delta ~ 0.50)",
+      strike: targetCall50.strike,
+      nature: "Vender Call ATM (Delta ~ 0.50)",
       color: "red"
     });
 
   } else {
     if (currentRegime === "A") {
       signalTitle = "MANTER COLLAR: ALTA ATIVA (REGIME A)";
-      signalNote = `Preço atual (R$ ${livePrice.toFixed(2)}) e score multifatorial (${totalScore > 0 ? "+" : ""}${totalScore} pts) sustentam o regime de alta. Nenhuma ordem pendente.`;
+      signalNote = `Preço atual (R$ ${livePrice.toFixed(2)}) e score multifatorial (${totalScore > 0 ? "+" : ""}${totalScore} pts) sustentam o regime de alta (proteção de cauda recomendada).`;
+
+      const activePutItems = optionsInCustody.filter(o => o.type.includes("PUT") && o.qty > 0);
+      const activeCallItems = optionsInCustody.filter(o => o.type.includes("CALL") && o.qty > 0);
+
+      const putAligned = activePutItems.length === 1 && activePutItems[0].ticker === targetPut06.ticker;
+      const callAligned = activeCallItems.length === 1 && activeCallItems[0].ticker === targetCall06.ticker;
+
+      if (!putAligned || !callAligned) {
+        needsAdjustment = true;
+        signalAction = "Rebalancear para Collar de Alta";
+        signalNote += " A estrutura precisa de ajuste para obter a proteção de cauda ideal e yield OTM.";
+
+        if (!putAligned) {
+          activePutItems.forEach(item => {
+            orderLegs.push({
+              action: "VENDA",
+              ticker: item.ticker,
+              qty: qty,
+              strike: item.strike || 17.39,
+              nature: "Desmontar Put não alinhada",
+              color: "red"
+            });
+          });
+          orderLegs.push({
+            action: "COMPRA",
+            ticker: targetPut06.ticker,
+            qty: qty,
+            strike: targetPut06.strike,
+            nature: "Comprar Put OTM (Cauda / Black Swan)",
+            color: "green"
+          });
+        }
+
+        if (!callAligned) {
+          activeCallItems.forEach(item => {
+            orderLegs.push({
+              action: "COMPRA",
+              ticker: item.ticker,
+              qty: qty,
+              strike: item.strike || 19.14,
+              nature: "Recomprar Call não alinhada",
+              color: "green"
+            });
+          });
+          orderLegs.push({
+            action: "VENDA",
+            ticker: targetCall06.ticker,
+            qty: qty,
+            strike: targetCall06.strike,
+            nature: "Vender Call OTM (Delta ~ 0.06)",
+            color: "red"
+          });
+        }
+      } else {
+        signalAction = "Manter Estrutura Alinhada";
+        signalNote += " As opções em custódia estão perfeitamente alinhadas com as metas do Regime A.";
+      }
+
     } else {
       signalTitle = "MANTER COLLAR: PROTEÇÃO ATIVA (REGIME B)";
-      signalNote = `Preço atual (R$ ${livePrice.toFixed(2)}) e score multifatorial (${totalScore > 0 ? "+" : ""}${totalScore} pts) sustentam o regime de proteção. Posição de proteção total mantida.`;
+      signalNote = `Preço atual (R$ ${livePrice.toFixed(2)}) e score multifatorial (${totalScore > 0 ? "+" : ""}${totalScore} pts) sustentam o regime de proteção.`;
+
+      const activePutItems = optionsInCustody.filter(o => o.type.includes("PUT") && o.qty > 0);
+      const activeCallItems = optionsInCustody.filter(o => o.type.includes("CALL") && o.qty > 0);
+
+      const putAligned = activePutItems.length === 1 && activePutItems[0].ticker === targetPut50.ticker;
+      const callAligned = activeCallItems.length === 1 && activeCallItems[0].ticker === targetCall50.ticker;
+
+      if (!putAligned || !callAligned) {
+        needsAdjustment = true;
+        signalAction = "Rebalancear para Collar ATM";
+        signalNote += " A estrutura precisa de ajuste para obter a proteção ATM ideal e o financiamento ATM.";
+
+        if (!putAligned) {
+          activePutItems.forEach(item => {
+            orderLegs.push({
+              action: "VENDA",
+              ticker: item.ticker,
+              qty: qty,
+              strike: item.strike || 17.39,
+              nature: "Desmontar Put OTM (Ajustar p/ ATM)",
+              color: "red"
+            });
+          });
+          orderLegs.push({
+            action: "COMPRA",
+            ticker: targetPut50.ticker,
+            qty: qty,
+            strike: targetPut50.strike,
+            nature: "Comprar Put ATM (Delta ~ -0.50)",
+            color: "green"
+          });
+        }
+
+        if (!callAligned) {
+          activeCallItems.forEach(item => {
+            orderLegs.push({
+              action: "COMPRA",
+              ticker: item.ticker,
+              qty: qty,
+              strike: item.strike || 19.14,
+              nature: "Recomprar Call Incompatível",
+              color: "green"
+            });
+          });
+          orderLegs.push({
+            action: "VENDA",
+            ticker: targetCall50.ticker,
+            qty: qty,
+            strike: targetCall50.strike,
+            nature: "Vender Call ATM (Delta ~ 0.50)",
+            color: "red"
+          });
+        }
+      } else {
+        signalAction = "Manter Estrutura Alinhada";
+        signalNote += " As opções em custódia estão perfeitamente alinhadas com as metas do Regime B.";
+      }
     }
   }
 
@@ -813,6 +1054,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
               }}
               livePriceFromClear={liveWinPrice}
               winTicker={liveWinTicker}
+              liveCustody={liveCustody}
             />
           </main>
         </div>
@@ -1075,9 +1317,17 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                       <td className="px-6 py-4 text-xs text-zinc-500 font-sans">{item.type}</td>
                       <td className="px-6 py-4 text-right">{item.strike ? `R$ ${item.strike.toFixed(2)}` : "-"}</td>
                       <td className="px-6 py-4 text-right text-xs">{item.expiration || "-"}</td>
-                      <td className="px-6 py-4 text-right font-bold text-zinc-800">{item.qty.toLocaleString("pt-BR")}</td>
-                      <td className="px-6 py-4 text-right">R$ {item.avgPrice.toFixed(2)}</td>
-                      <td className="px-6 py-4 text-right">R$ {item.mktPrice.toFixed(2)}</td>
+                      <td className="px-6 py-4 text-right font-bold text-zinc-800">
+                        {item.qty === 0 && item.type.includes("Encerrada") ? `0 (${item.txQty?.toLocaleString("pt-BR")})` : item.qty.toLocaleString("pt-BR")}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        R$ {item.avgPrice.toFixed(2)}
+                        {item.qty === 0 && item.type.includes("Encerrada") ? <span className="text-[10px] text-zinc-400 block font-sans">Preço Entrada</span> : null}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        R$ {item.mktPrice.toFixed(2)}
+                        {item.qty === 0 && item.type.includes("Encerrada") ? <span className="text-[10px] text-zinc-400 block font-sans">Preço Saída</span> : null}
+                      </td>
                       <td className={`px-6 py-4 text-right font-bold ${item.pnl >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                         {item.pnl >= 0 ? "+" : ""}R$ {item.pnl.toLocaleString("pt-BR", {minimumFractionDigits: 2, maximumFractionDigits: 2})} ({item.pnlPercent >= 0 ? "+" : ""}{item.pnlPercent.toFixed(2)}%)
                       </td>
@@ -1085,6 +1335,91 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                   ))}
                 </tbody>
               </table>
+            </div>
+          </section>
+
+          {/* Opções de BBDC4 com Maior Liquidez (Série Ativa) */}
+          <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs mt-8">
+            <div className="mb-6 pb-3 border-b border-zinc-150 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Opções de BBDC4 com Maior Liquidez (Série Ativa)</h2>
+                <p className="text-xs text-zinc-400">Puts e Calls mais negociadas no vencimento mensal atual ({liveQuotes?.du ? `${liveQuotes.du} DU` : "21 DU"} restante)</p>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-zinc-100 text-zinc-650 border border-zinc-200">
+                MERCADO EM TEMPO REAL
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {/* Tabela de Puts */}
+              <div>
+                <h3 className="text-xs font-bold text-rose-605 uppercase tracking-wider font-mono mb-3 flex items-center gap-1.5">🛡️ Puts Recomendadas (Proteção de Baixa)</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left text-zinc-500">
+                    <thead className="text-[10px] uppercase tracking-wider text-zinc-400 bg-zinc-50 border-b border-zinc-250 font-mono">
+                      <tr>
+                        <th scope="col" className="px-3 py-2 font-bold text-zinc-900">Ticker</th>
+                        <th scope="col" className="px-3 py-2 text-right">Strike</th>
+                        <th scope="col" className="px-3 py-2 text-right">Delta</th>
+                        <th scope="col" className="px-3 py-2 text-right">Prêmio</th>
+                        <th scope="col" className="px-3 py-2 text-right">Negócios</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-150">
+                      {liveQuotes?.liquidPuts && liveQuotes.liquidPuts.length > 0 ? (
+                        liveQuotes.liquidPuts.map((item: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-zinc-50/50 transition-all font-mono">
+                            <td className="px-3 py-2.5 font-bold text-zinc-950">{item.ticker}</td>
+                            <td className="px-3 py-2.5 text-right">R$ {item.strike.toFixed(2)}</td>
+                            <td className="px-3 py-2.5 text-right text-rose-600 font-bold">{item.delta.toFixed(3)}</td>
+                            <td className="px-3 py-2.5 text-right font-bold text-zinc-800">R$ {item.price.toFixed(2)}</td>
+                            <td className="px-3 py-2.5 text-right">{item.trades.toLocaleString("pt-BR")}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="px-3 py-4 text-center text-zinc-400">Nenhuma opção encontrada</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Tabela de Calls */}
+              <div>
+                <h3 className="text-xs font-bold text-emerald-605 uppercase tracking-wider font-mono mb-3 flex items-center gap-1.5">📈 Calls Recomendadas (Yield / Financiamento)</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left text-zinc-500">
+                    <thead className="text-[10px] uppercase tracking-wider text-zinc-400 bg-zinc-50 border-b border-zinc-250 font-mono">
+                      <tr>
+                        <th scope="col" className="px-3 py-2 font-bold text-zinc-900">Ticker</th>
+                        <th scope="col" className="px-3 py-2 text-right">Strike</th>
+                        <th scope="col" className="px-3 py-2 text-right">Delta</th>
+                        <th scope="col" className="px-3 py-2 text-right">Prêmio</th>
+                        <th scope="col" className="px-3 py-2 text-right">Negócios</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-150">
+                      {liveQuotes?.liquidCalls && liveQuotes.liquidCalls.length > 0 ? (
+                        liveQuotes.liquidCalls.map((item: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-zinc-50/50 transition-all font-mono">
+                            <td className="px-3 py-2.5 font-bold text-zinc-950">{item.ticker}</td>
+                            <td className="px-3 py-2.5 text-right">R$ {item.strike.toFixed(2)}</td>
+                            <td className="px-3 py-2.5 text-right text-emerald-600 font-bold">+{item.delta.toFixed(3)}</td>
+                            <td className="px-3 py-2.5 text-right font-bold text-zinc-800">R$ {item.price.toFixed(2)}</td>
+                            <td className="px-3 py-2.5 text-right">{item.trades.toLocaleString("pt-BR")}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="px-3 py-4 text-center text-zinc-400">Nenhuma opção encontrada</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </section>
         </main>

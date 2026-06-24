@@ -162,7 +162,11 @@ export interface ActiveQuotesResponse {
   put_50: ActiveOptionQuote | null;
   call_50: ActiveOptionQuote | null;
   call_06: ActiveOptionQuote | null;
+  put_06: ActiveOptionQuote | null;
   du: number | null;
+  optionsLookup: { [ticker: string]: { ticker: string; strike: number; price: number; iv: number; delta: number; expiration: string; type: "PUT" | "CALL" } };
+  liquidPuts: any[];
+  liquidCalls: any[];
 }
 
 export async function fetchActiveOptionsQuotes(
@@ -181,7 +185,11 @@ export async function fetchActiveOptionsQuotes(
   let put50Result: ActiveOptionQuote | null = null;
   let call50Result: ActiveOptionQuote | null = null;
   let call06Result: ActiveOptionQuote | null = null;
+  let put06Result: ActiveOptionQuote | null = null;
   let targetDu: number | null = null;
+  let optionsLookup: { [ticker: string]: { ticker: string; strike: number; price: number; iv: number; delta: number; expiration: string; type: "PUT" | "CALL" } } = {};
+  let liquidPuts: any[] = [];
+  let liquidCalls: any[] = [];
 
   const returnEmpty = () => ({
     put: null,
@@ -196,7 +204,11 @@ export async function fetchActiveOptionsQuotes(
     put_50: null,
     call_50: null,
     call_06: null,
-    du: null
+    put_06: null,
+    du: null,
+    optionsLookup: {},
+    liquidPuts: [],
+    liquidCalls: []
   });
 
   const z = Math.floor(Date.now() / 10000);
@@ -221,6 +233,37 @@ export async function fetchActiveOptionsQuotes(
           }
           const expirations = optionsChain.expirations || [];
 
+          // Popula optionsLookup com todas as opções de todos os vencimentos
+          for (const exp of expirations) {
+            const expDate = exp.dt;
+            const putsList = exp.puts || [];
+            const callsList = exp.calls || [];
+            for (const p of putsList) {
+              const ticker = `BBDC${p[0]}`;
+              optionsLookup[ticker] = {
+                ticker,
+                strike: parseFloat(p[3]),
+                price: p[6] !== null && p[6] !== undefined ? parseFloat(p[6]) : 0.0,
+                iv: p[17] !== null && p[17] !== undefined ? parseFloat(p[17]) : 0.0,
+                delta: p[18] !== null && p[18] !== undefined ? parseFloat(p[18]) : 0.0,
+                expiration: expDate,
+                type: "PUT"
+              };
+            }
+            for (const c of callsList) {
+              const ticker = `BBDC${c[0]}`;
+              optionsLookup[ticker] = {
+                ticker,
+                strike: parseFloat(c[3]),
+                price: c[6] !== null && c[6] !== undefined ? parseFloat(c[6]) : 0.0,
+                iv: c[17] !== null && c[17] !== undefined ? parseFloat(c[17]) : 0.0,
+                delta: c[18] !== null && c[18] !== undefined ? parseFloat(c[18]) : 0.0,
+                expiration: expDate,
+                type: "CALL"
+              };
+            }
+          }
+
           // 1. Encontra vencimento alvo mensal (15 <= du <= 45)
           let targetExp = expirations.find((exp: any) => exp.du >= 15 && exp.du <= 45 && !!exp.m);
           if (!targetExp) {
@@ -231,6 +274,55 @@ export async function fetchActiveOptionsQuotes(
             targetDu = targetExp.du;
             const puts = targetExp.puts || [];
             const calls = targetExp.calls || [];
+
+            // Encontra puts e calls mais líquidas
+            const allPutsSorted = puts
+              .map((p: any) => ({
+                ticker: `BBDC${p[0]}`,
+                strike: parseFloat(p[3]),
+                price: p[6] !== null && p[6] !== undefined ? parseFloat(p[6]) : 0.0,
+                iv: p[17] !== null && p[17] !== undefined ? parseFloat(p[17]) : 0.0,
+                delta: p[18] !== null && p[18] !== undefined ? parseFloat(p[18]) : 0.0,
+                trades: p[9] !== null && p[9] !== undefined ? parseInt(p[9]) : 0,
+                vol: p[10] !== null && p[10] !== undefined ? parseFloat(p[10]) : 0.0
+              }))
+              .sort((a: any, b: any) => b.trades - a.trades);
+
+            liquidPuts = allPutsSorted.slice(0, 5);
+
+            // Garante que exista pelo menos uma Put OTM de baixo delta (proteção de cauda / swan)
+            const hasOtmPut = liquidPuts.some((p: any) => p.delta >= -0.12 && p.delta <= -0.03);
+            if (!hasOtmPut) {
+              const bestOtmPut = allPutsSorted.find((p: any) => p.delta >= -0.12 && p.delta <= -0.03 && p.trades > 0) ||
+                                 allPutsSorted.find((p: any) => p.delta >= -0.12 && p.delta <= -0.03);
+              if (bestOtmPut) {
+                liquidPuts.push(bestOtmPut);
+              }
+            }
+
+            const allCallsSorted = calls
+              .map((c: any) => ({
+                ticker: `BBDC${c[0]}`,
+                strike: parseFloat(c[3]),
+                price: c[6] !== null && c[6] !== undefined ? parseFloat(c[6]) : 0.0,
+                iv: c[17] !== null && c[17] !== undefined ? parseFloat(c[17]) : 0.0,
+                delta: c[18] !== null && c[18] !== undefined ? parseFloat(c[18]) : 0.0,
+                trades: c[9] !== null && c[9] !== undefined ? parseInt(c[9]) : 0,
+                vol: c[10] !== null && c[10] !== undefined ? parseFloat(c[10]) : 0.0
+              }))
+              .sort((a: any, b: any) => b.trades - a.trades);
+
+            liquidCalls = allCallsSorted.slice(0, 5);
+
+            // Garante que exista pelo menos uma Call OTM de baixo delta (swan call)
+            const hasOtmCall = liquidCalls.some((c: any) => c.delta >= 0.03 && c.delta <= 0.12);
+            if (!hasOtmCall) {
+              const bestOtmCall = allCallsSorted.find((c: any) => c.delta >= 0.03 && c.delta <= 0.12 && c.trades > 0) ||
+                                  allCallsSorted.find((c: any) => c.delta >= 0.03 && c.delta <= 0.12);
+              if (bestOtmCall) {
+                liquidCalls.push(bestOtmCall);
+              }
+            }
 
             // A. Buscar Put Delta -0.375
             let minDiff375 = Infinity;
@@ -383,6 +475,25 @@ export async function fetchActiveOptionsQuotes(
                 }
               }
             }
+
+            // I. Buscar Put Delta -0.065 (OTM, proteção de cauda / black swan)
+            let minDiff06P = Infinity;
+            for (const p of puts) {
+              const delta = p[18] !== null && p[18] !== undefined ? parseFloat(p[18]) : null;
+              if (delta !== null) {
+                const diff = Math.abs(delta - (-0.065));
+                if (diff < minDiff06P) {
+                  minDiff06P = diff;
+                  put06Result = {
+                    ticker: `BBDC${p[0]}`,
+                    strike: parseFloat(p[3]),
+                    price: p[6] !== null && p[6] !== undefined ? parseFloat(p[6]) : 0.0,
+                    iv: p[17] !== null && p[17] !== undefined ? parseFloat(p[17]) : 0.0,
+                    delta: delta
+                  };
+                }
+              }
+            }
           }
 
           // 2. Encontrar cotação para os tickers específicos da posição ativa atual (pode estar em expirations diferentes)
@@ -515,6 +626,15 @@ export async function fetchActiveOptionsQuotes(
       delta: 0.065
     };
   }
+  if (!put06Result) {
+    put06Result = {
+      ticker: "BBDCS160",
+      strike: 16.00,
+      price: 0.02,
+      iv: 0.245,
+      delta: -0.065
+    };
+  }
   if (!targetDu) {
     targetDu = 21; // fallback ~ 1 mes
   }
@@ -534,6 +654,7 @@ export async function fetchActiveOptionsQuotes(
         if (put50Result?.ticker) tickersToFetch.add(put50Result.ticker);
         if (call50Result?.ticker) tickersToFetch.add(call50Result.ticker);
         if (call06Result?.ticker) tickersToFetch.add(call06Result.ticker);
+        if (put06Result?.ticker) tickersToFetch.add(put06Result.ticker);
         if (put275Result?.ticker) tickersToFetch.add(put275Result.ticker);
         if (call275Result?.ticker) tickersToFetch.add(call275Result.ticker);
 
@@ -565,6 +686,9 @@ export async function fetchActiveOptionsQuotes(
         if (call06Result && quotesMap.has(call06Result.ticker)) {
           call06Result.price = quotesMap.get(call06Result.ticker)!;
         }
+        if (put06Result && quotesMap.has(put06Result.ticker)) {
+          put06Result.price = quotesMap.get(put06Result.ticker)!;
+        }
         if (put275Result && quotesMap.has(put275Result.ticker)) {
           put275Result.price = quotesMap.get(put275Result.ticker)!;
         }
@@ -575,6 +699,25 @@ export async function fetchActiveOptionsQuotes(
     } catch (err) {
       console.error("Erro ao integrar cotações em tempo real da Clear API:", err);
     }
+  }
+
+  if (liquidPuts.length === 0) {
+    liquidPuts = [
+      { ticker: "BBDCS2", strike: 17.39, price: 0.16, iv: 0.262, delta: -0.262, trades: 130, vol: 72995.00 },
+      { ticker: "BBDCS174", strike: 17.14, price: 0.13, iv: 0.245, delta: -0.194, trades: 157, vol: 97574.00 },
+      { ticker: "BBDCS175", strike: 17.64, price: 0.25, iv: 0.249, delta: -0.337, trades: 98, vol: 36389.00 },
+      { ticker: "BBDCS168", strike: 16.14, price: 0.03, iv: 0.242, delta: -0.059, trades: 92, vol: 5595.00 },
+      { ticker: "BBDCS170", strike: 17.00, price: 0.42, iv: 0.249, delta: -0.375, trades: 42, vol: 4000.00 }
+    ];
+  }
+  if (liquidCalls.length === 0) {
+    liquidCalls = [
+      { ticker: "BBDCG2", strike: 17.39, price: 0.80, iv: 0.220, delta: 0.761, trades: 370, vol: 1031579.00 },
+      { ticker: "BBDCG175", strike: 17.64, price: 0.63, iv: 0.218, delta: 0.678, trades: 166, vol: 530271.00 },
+      { ticker: "BBDCG183", strike: 18.39, price: 0.25, iv: 0.213, delta: 0.378, trades: 150, vol: 43724.00 },
+      { ticker: "BBDCG184", strike: 18.14, price: 0.35, iv: 0.215, delta: 0.480, trades: 149, vol: 171554.00 },
+      { ticker: "BBDCG18", strike: 18.89, price: 0.12, iv: 0.212, delta: 0.222, trades: 109, vol: 88956.00 }
+    ];
   }
 
   const skew = (put375Result.iv - call131Result.iv) * 100;
@@ -592,7 +735,11 @@ export async function fetchActiveOptionsQuotes(
     put_50: put50Result,
     call_50: call50Result,
     call_06: call06Result,
-    du: targetDu
+    put_06: put06Result,
+    du: targetDu,
+    optionsLookup,
+    liquidPuts,
+    liquidCalls
   };
 }
 
@@ -729,5 +876,35 @@ export async function fetchClearCustody(token: string): Promise<any[]> {
     return [];
   }
 }
+
+export async function fetchClearOrders(token: string): Promise<any[]> {
+  const baseUrl = "https://variableincome-openapi.xpi.com.br/api";
+  const subscriptionKey = "54870a6e21e14a38adbcdb27ebb5f195";
+  const userAgent = "Smart-Trader-API Devs-Clear";
+  const url = `${baseUrl}/v1/orders`;
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Ocp-Apim-Subscription-Key": subscriptionKey,
+        "Authorization": `Bearer ${token}`,
+        "User-Agent": userAgent,
+      },
+      next: { revalidate: 0 } // Sem cache para ordens
+    });
+
+    if (!response.ok) {
+      console.warn("Falha ao buscar ordens da Clear API:", await response.text());
+      return [];
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Erro ao buscar ordens da Clear API:", error);
+    return [];
+  }
+}
+
 
 
