@@ -40,7 +40,7 @@ export default function LongShortWin({ initialState, livePriceFromClear, winTick
   const [atrMultiplier, setAtrMultiplier] = useState(1.0);
   
   // Preços
-  const basePrice = livePriceFromClear || initialState.close_price || 120000;
+  const basePrice = livePriceFromClear || initialState.close_price || 170000;
   const [simulatedPrice, setSimulatedPrice] = useState(basePrice);
 
   useEffect(() => {
@@ -103,13 +103,7 @@ export default function LongShortWin({ initialState, livePriceFromClear, winTick
       const blocked = custodyWin.collateralBlockedQuantity || 0;
       positionQty = available + blocked;
       if (positionQty !== 0) {
-        // Trava de segurança: Clear API pode retornar lixo/anomalia no averageCost do WIN (ex: 173439)
-        if (custodyWin.averageCost && custodyWin.averageCost > 50000 && custodyWin.averageCost < 150000) {
-          entryPrice = custodyWin.averageCost;
-        } else {
-          // Fallback para o preço atual se a API retornar valor corrompido
-          entryPrice = basePrice;
-        }
+        entryPrice = custodyWin.averageCost || entryPrice;
       }
     }
   }
@@ -120,32 +114,114 @@ export default function LongShortWin({ initialState, livePriceFromClear, winTick
   const stopDistance = roundToWIN(atr * atrMultiplier);
   const targetDistance = roundToWIN(atr * atrMultiplier * 1.5);
 
+  // --- Trailing Stop com Persistência (localStorage) ---
+  const TRAILING_KEY = `win_trailing_${winTicker}`;
+
+  interface TrailingState {
+    direction: "LONG" | "SHORT";
+    entryPrice: number;
+    currentStop: number;
+    currentTarget: number;
+    lastUpdated: string;
+  }
+
+  // Função para ler estado persistido
+  const readTrailing = (): TrailingState | null => {
+    try {
+      const raw = localStorage.getItem(TRAILING_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw) as TrailingState;
+    } catch { return null; }
+  };
+
+  // Função para salvar estado persistido
+  const saveTrailing = (state: TrailingState) => {
+    try { localStorage.setItem(TRAILING_KEY, JSON.stringify(state)); } catch {}
+  };
+
+  // Função para limpar estado persistido
+  const clearTrailing = () => {
+    try { localStorage.removeItem(TRAILING_KEY); } catch {}
+  };
+
+  // Calcula stops e alvos sugeridos pelo modelo (sem persistência)
   let stopInicial = 0;
   let alvoInicial = 0;
-  let stopRecomendado = 0;
-  let alvoRecomendado = 0;
-  
-  // Limites Iniciais (Baseados no Preço de Entrada ou no Preço Atual se não houver posição)
+  let stopModeloAtual = 0;  // Trailing stop sugerido pela KAMA agora
+  let alvoModeloAtual = 0;  // Alvo sugerido pela Bollinger agora
+
   const referencePrice = hasActivePosition ? entryPrice : currentPrice;
 
   if (direction === "LONG" || (direction === "CAIXA" && modelSignal === "COMPRA")) {
     stopInicial = roundToWIN(referencePrice - stopDistance);
     alvoInicial = roundToWIN(referencePrice + targetDistance);
-    
-    const stopSugerido = roundToWIN(kama - atr * 0.5);
-    stopRecomendado = Math.max(stopInicial, stopSugerido);
-
-    const alvoSugerido = roundToWIN(bollingerUpper);
-    alvoRecomendado = Math.max(alvoInicial, alvoSugerido);
+    stopModeloAtual = roundToWIN(kama - atr * 0.5);
+    alvoModeloAtual = roundToWIN(bollingerUpper);
   } else if (direction === "SHORT" || (direction === "CAIXA" && modelSignal === "VENDA")) {
     stopInicial = roundToWIN(referencePrice + stopDistance);
     alvoInicial = roundToWIN(referencePrice - targetDistance);
+    stopModeloAtual = roundToWIN(kama + atr * 0.5);
+    alvoModeloAtual = roundToWIN(bollingerLower);
+  }
 
-    const stopSugerido = roundToWIN(kama + atr * 0.5);
-    stopRecomendado = Math.min(stopInicial, stopSugerido);
+  // Aplica persistência: lê o melhor stop/alvo já registrado e só move a favor
+  let stopRecomendado = stopInicial;
+  let alvoRecomendado = alvoInicial;
 
-    const alvoSugerido = roundToWIN(bollingerLower);
-    alvoRecomendado = Math.min(alvoInicial, alvoSugerido);
+  if (hasActivePosition) {
+    const saved = readTrailing();
+
+    // Verifica se o estado persistido é da mesma posição
+    const samePosition = saved && saved.direction === direction && saved.entryPrice === entryPrice;
+
+    // Detecta se os valores salvos estão corrompidos por um erro de cálculo do ATR anterior (mais de 4 ATRs de distância da entrada)
+    const isCorrupted = saved && (
+      direction === "LONG"
+        ? (saved.currentTarget > entryPrice + atr * 4 || saved.currentStop < entryPrice - atr * 4)
+        : (saved.currentTarget < entryPrice - atr * 4 || saved.currentStop > entryPrice + atr * 4)
+    );
+
+    if (samePosition && saved && !isCorrupted) {
+      // Lê o melhor stop/alvo persistido (nunca recua)
+      if (direction === "LONG") {
+        // Stop: max(persistido, modelo_atual, inicial) — só sobe
+        stopRecomendado = Math.max(saved.currentStop, stopModeloAtual, stopInicial);
+        // Alvo: max(persistido, modelo_atual, inicial) — só sobe
+        alvoRecomendado = Math.max(saved.currentTarget, alvoModeloAtual, alvoInicial);
+      } else {
+        // SHORT: Stop desce, Alvo desce
+        stopRecomendado = Math.min(saved.currentStop, stopModeloAtual, stopInicial);
+        alvoRecomendado = Math.min(saved.currentTarget, alvoModeloAtual, alvoInicial);
+      }
+    } else {
+      // Nova posição, primeira vez ou estado corrompido: inicializa com modelo vs inicial
+      if (direction === "LONG") {
+        stopRecomendado = Math.max(stopInicial, stopModeloAtual);
+        alvoRecomendado = Math.max(alvoInicial, alvoModeloAtual);
+      } else {
+        stopRecomendado = Math.min(stopInicial, stopModeloAtual);
+        alvoRecomendado = Math.min(alvoInicial, alvoModeloAtual);
+      }
+    }
+
+    // Persiste o estado atualizado
+    saveTrailing({
+      direction,
+      entryPrice,
+      currentStop: stopRecomendado,
+      currentTarget: alvoRecomendado,
+      lastUpdated: new Date().toISOString()
+    });
+  } else {
+    // Sem posição: limpa estado antigo
+    clearTrailing();
+    if (modelSignal === "COMPRA") {
+      stopRecomendado = Math.max(stopInicial, stopModeloAtual);
+      alvoRecomendado = Math.max(alvoInicial, alvoModeloAtual);
+    } else if (modelSignal === "VENDA") {
+      stopRecomendado = Math.min(stopInicial, stopModeloAtual);
+      alvoRecomendado = Math.min(alvoInicial, alvoModeloAtual);
+    }
   }
 
   const riskPerContract = stopDistance * 0.20;
@@ -162,26 +238,35 @@ export default function LongShortWin({ initialState, livePriceFromClear, winTick
   const percentualCapital = (pnlFinanceiro / capitalBase) * 100;
 
   // Lógica de Recomendação de Ajuste (Anti-Spam 50 pts)
+  // Agora compara o recomendado contra o PERSISTIDO, não contra o inicial
   let ajusteStop = "";
   let ajusteAlvo = "";
   
   if (hasActivePosition) {
-    const deltaStop = stopRecomendado - stopInicial; // Aqui simulamos Stop Atual como Stop Inicial
+    const saved = readTrailing();
+    // Se há um valor salvo anterior, compara contra ele para ver se mudou
+    // Se não, compara contra o inicial
+    const stopAnterior = (saved && saved.direction === direction && saved.entryPrice === entryPrice) 
+      ? saved.currentStop : stopInicial;
+    const alvoAnterior = (saved && saved.direction === direction && saved.entryPrice === entryPrice) 
+      ? saved.currentTarget : alvoInicial;
+
+    const deltaStop = stopRecomendado - stopInicial;
     const deltaAlvo = alvoRecomendado - alvoInicial;
 
     if (Math.abs(deltaStop) >= 50) {
       if (direction === "LONG" && deltaStop > 0) {
-        ajusteStop = `Subir Stop Loss para ${stopRecomendado} pts`;
+        ajusteStop = `Subir Stop Loss para ${stopRecomendado.toLocaleString("pt-BR")} pts`;
       } else if (direction === "SHORT" && deltaStop < 0) {
-        ajusteStop = `Descer Stop Loss para ${stopRecomendado} pts`;
+        ajusteStop = `Descer Stop Loss para ${stopRecomendado.toLocaleString("pt-BR")} pts`;
       }
     }
 
     if (Math.abs(deltaAlvo) >= 50) {
       if (direction === "LONG" && deltaAlvo > 0) {
-        ajusteAlvo = `Subir Alvo para ${alvoRecomendado} pts`;
+        ajusteAlvo = `Subir Alvo para ${alvoRecomendado.toLocaleString("pt-BR")} pts`;
       } else if (direction === "SHORT" && deltaAlvo < 0) {
-        ajusteAlvo = `Descer Alvo para ${alvoRecomendado} pts`;
+        ajusteAlvo = `Descer Alvo para ${alvoRecomendado.toLocaleString("pt-BR")} pts`;
       }
     }
   }

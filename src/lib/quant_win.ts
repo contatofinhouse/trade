@@ -240,10 +240,18 @@ export async function fetchWinHistoryPrices(): Promise<{
   const cleanLows: number[] = [];
 
   for (let i = 0; i < closes.length; i++) {
-    if (closes[i] !== null && highs[i] !== null && lows[i] !== null) {
-      cleanCloses.push(closes[i]!);
-      cleanHighs.push(highs[i]!);
-      cleanLows.push(lows[i]!);
+    const c = closes[i];
+    let h = highs[i];
+    let l = lows[i];
+
+    if (c !== null && c > 0) {
+      // Se high ou low forem nulos ou menores/iguais a zero (ex: falhas pontuais no Yahoo), usamos o close como fallback
+      if (h === null || h <= 0) h = c;
+      if (l === null || l <= 0) l = c;
+
+      cleanCloses.push(c);
+      cleanHighs.push(h);
+      cleanLows.push(l);
     }
   }
 

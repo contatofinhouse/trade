@@ -42,11 +42,16 @@ export default async function Home() {
     console.error("[page] Falha ao buscar indicadores quantitativos do WIN:", e);
     // Fallback básico para o WIN
     winIndicators = {
-      close_price: 120000,
-      kama: 119500,
-      atr: 1500,
-      high: 120500,
-      low: 119000
+      close_price: 170000,
+      kama: 169500,
+      atr: 1800,
+      high: 171000,
+      low: 169000,
+      bollinger_upper: 173000,
+      bollinger_lower: 166000,
+      connors_rsi: 50,
+      kalman_price: 170000,
+      kalman_trend: "UP",
     };
   }
 

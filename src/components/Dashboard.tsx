@@ -28,6 +28,7 @@ import {
   Scale
 } from "lucide-react";
 import LongShortWin from "./LongShortWin";
+import Metodologia from "./Metodologia";
 
 interface DashboardProps {
   initialState: {
@@ -147,7 +148,7 @@ const getOptionDetails = (ticker: string, activeQuotes: any, state: any) => {
 };
 export default function Dashboard({ initialState, initialHistory, activeQuotes, winIndicators, winLivePrice, initialCustody, initialWinTicker }: DashboardProps) {
   const [isMounted, setIsMounted] = useState(false);
-  const [activeTab, setActiveTab] = useState<"bbdc4" | "win">("bbdc4");
+  const [activeTab, setActiveTab] = useState<"bbdc4" | "win" | "metodologia">("bbdc4");
   const [simulatedPrice, setSimulatedPrice] = useState(17.66); // Default current price
   
   const [liveQuotes, setLiveQuotes] = useState(activeQuotes);
@@ -1013,11 +1014,27 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             >
               LONG/SHORT WIN
             </button>
+            <button
+              onClick={() => setActiveTab("metodologia")}
+              className={`text-xs font-bold uppercase tracking-wider h-full border-b-2 px-1 transition-all cursor-pointer ${
+                activeTab === "metodologia"
+                  ? "border-zinc-900 text-zinc-950"
+                  : "border-transparent text-zinc-400 hover:text-zinc-600"
+              }`}
+            >
+              METODOLOGIA
+            </button>
           </div>
         </div>
       </div>
 
-      {activeTab === "win" ? (
+      {activeTab === "metodologia" ? (
+        <div className="animate-in fade-in duration-300">
+          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <Metodologia />
+          </main>
+        </div>
+      ) : activeTab === "win" ? (
         <div className="animate-in fade-in duration-300">
           <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-zinc-200">
@@ -1041,15 +1058,15 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             </header>
             <LongShortWin
               initialState={winIndicators || { 
-                close_price: 120000, 
-                kama: 119500, 
-                atr: 1500, 
-                high: 120500, 
-                low: 119000,
-                bollinger_upper: 122500,
-                bollinger_lower: 116500,
+                close_price: 170000, 
+                kama: 169500, 
+                atr: 1800, 
+                high: 171000, 
+                low: 169000,
+                bollinger_upper: 173000,
+                bollinger_lower: 166000,
                 connors_rsi: 50,
-                kalman_price: 120000,
+                kalman_price: 170000,
                 kalman_trend: "UP"
               }}
               livePriceFromClear={liveWinPrice}
