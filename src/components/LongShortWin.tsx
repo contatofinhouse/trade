@@ -103,7 +103,13 @@ export default function LongShortWin({ initialState, livePriceFromClear, winTick
       const blocked = custodyWin.collateralBlockedQuantity || 0;
       positionQty = available + blocked;
       if (positionQty !== 0) {
-        entryPrice = custodyWin.averageCost || entryPrice;
+        // Trava de segurança: Clear API pode retornar lixo/anomalia no averageCost do WIN (ex: 173439)
+        if (custodyWin.averageCost && custodyWin.averageCost > 50000 && custodyWin.averageCost < 150000) {
+          entryPrice = custodyWin.averageCost;
+        } else {
+          // Fallback para o preço atual se a API retornar valor corrompido
+          entryPrice = basePrice;
+        }
       }
     }
   }
