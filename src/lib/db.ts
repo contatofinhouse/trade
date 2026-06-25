@@ -72,11 +72,12 @@ async function supabaseRequest(method: string, path: string, body?: any, preferH
     throw new Error(`Supabase REST request failed: ${response.status} ${response.statusText} - ${errText}`);
   }
 
-  if (response.status === 204) {
+  const text = await response.text();
+  if (!text || text.trim() === "") {
     return null;
   }
 
-  return await response.json();
+  return JSON.parse(text);
 }
 
 export async function getHedgeState(): Promise<any> {

@@ -744,7 +744,20 @@ export async function fetchActiveOptionsQuotes(
 }
 
 // Funções auxiliares para integração com a Clear API (XP Open API)
+let cachedToken: string | null = null;
+let tokenExpiryTime: number = 0;
+
+export function clearCachedToken() {
+  cachedToken = null;
+  tokenExpiryTime = 0;
+}
+
 export async function getClearAccessToken(apiKey: string, apiSecret: string): Promise<string | null> {
+  const now = Date.now();
+  if (cachedToken && now < tokenExpiryTime) {
+    return cachedToken;
+  }
+
   const authUrl = "https://api-parceiros.xpi.com.br/variableincome-openapi-auth/v1/auth";
   const subscriptionKey = "54870a6e21e14a38adbcdb27ebb5f195";
   const userAgent = "Smart-Trader-API Devs-Clear";
@@ -758,10 +771,10 @@ export async function getClearAccessToken(apiKey: string, apiSecret: string): Pr
         "User-Agent": userAgent,
       },
       body: JSON.stringify({
-        API_KEY: apiKey,
-        API_SECRET: apiSecret,
+        API_KEY: apiKey.replace(/"/g, ""),
+        API_SECRET: apiSecret.replace(/"/g, ""),
       }),
-      next: { revalidate: 3000 } // Cache do token por 50 minutos
+      cache: "no-store"
     });
 
     if (!response.ok) {
@@ -770,7 +783,12 @@ export async function getClearAccessToken(apiKey: string, apiSecret: string): Pr
     }
 
     const data = await response.json();
-    return data.access_token || null;
+    if (data.access_token) {
+      cachedToken = data.access_token;
+      tokenExpiryTime = Date.now() + 25 * 60 * 1000; // Cache por 25 minutos
+      return cachedToken;
+    }
+    return null;
   } catch (error) {
     console.error("Erro ao chamar endpoint de autenticação da Clear API:", error);
     return null;
@@ -795,6 +813,9 @@ export async function fetchClearQuote(ticker: string, token: string): Promise<nu
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        clearCachedToken();
+      }
       console.warn(`Falha ao buscar cotação de ${ticker} na Clear API:`, await response.text());
       return null;
     }
@@ -866,6 +887,9 @@ export async function fetchClearCustody(token: string): Promise<any[]> {
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        clearCachedToken();
+      }
       console.warn("Falha ao buscar custódia da Clear API:", await response.text());
       return [];
     }
@@ -895,6 +919,9 @@ export async function fetchClearOrders(token: string): Promise<any[]> {
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        clearCachedToken();
+      }
       console.warn("Falha ao buscar ordens da Clear API:", await response.text());
       return [];
     }

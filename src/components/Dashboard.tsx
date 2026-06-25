@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import LongShortWin from "./LongShortWin";
 import Metodologia from "./Metodologia";
+import StockPickingLongBias from "./StockPickingLongBias";
 
 interface DashboardProps {
   initialState: {
@@ -148,7 +149,7 @@ const getOptionDetails = (ticker: string, activeQuotes: any, state: any) => {
 };
 export default function Dashboard({ initialState, initialHistory, activeQuotes, winIndicators, winLivePrice, initialCustody, initialWinTicker }: DashboardProps) {
   const [isMounted, setIsMounted] = useState(false);
-  const [activeTab, setActiveTab] = useState<"bbdc4" | "win" | "metodologia">("bbdc4");
+  const [activeTab, setActiveTab] = useState<"bbdc4" | "win" | "stock-picking" | "metodologia">("bbdc4");
   const [simulatedPrice, setSimulatedPrice] = useState(17.66); // Default current price
   
   const [liveQuotes, setLiveQuotes] = useState(activeQuotes);
@@ -255,8 +256,18 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   let callTicker: string | null = state.active_call_ticker;
   let callStrike: number | null = state.active_call_strike;
   let isHedgeActive = state.hedge_active;
-  let putQty = state.active_put_ticker ? qty : 0;
-  let callQty = state.active_call_ticker ? qty : 0;
+  let putQty = 0;
+  let callQty = 0;
+  
+  if (state.transactions && state.transactions.length > 0) {
+    const activePuts = state.transactions.filter((tx: any) => tx.type === "PUT" && tx.status === "open");
+    const activeCalls = state.transactions.filter((tx: any) => tx.type === "CALL" && tx.status === "open");
+    putQty = activePuts.reduce((sum: number, tx: any) => sum + tx.qty, 0);
+    callQty = activeCalls.reduce((sum: number, tx: any) => sum + tx.qty, 0);
+  } else {
+    putQty = state.active_put_ticker ? qty : 0;
+    callQty = state.active_call_ticker ? qty : 0;
+  }
   let custodyPutItem: any = null;
   let custodyCallItem: any = null;
 
@@ -382,6 +393,20 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   // Cálculo de Skew do Smile (Put IV - Call IV)
   const smileSkew = ((putQuote?.iv || 0.247) - (callQuote ? callQuote.iv : 0.213)) * 100;
 
+  // Helper to determine delta for each option
+  const getOptionDelta = (ticker: string, type: "PUT" | "CALL") => {
+    if (liveQuotes?.optionsLookup?.[ticker]) {
+      return liveQuotes.optionsLookup[ticker].delta;
+    }
+    if (type === "PUT" && putQuote && putQuote.ticker === ticker) {
+      return putQuote.delta;
+    }
+    if (type === "CALL" && callQuote && callQuote.ticker === ticker) {
+      return callQuote.delta;
+    }
+    return type === "PUT" ? -0.30 : 0.25;
+  };
+
   // Cálculo dinâmico do PnL Real-Time de Opções (Ativas e Encerradas)
   const optionsInCustody: any[] = [];
   let calculatedPutsPL = 0;
@@ -428,7 +453,8 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
         pnl: itemPL,
         pnlPercent: pnlPercent,
         strike: strike,
-        expiration: expiration
+        expiration: expiration,
+        delta: getOptionDelta(tx.ticker, type)
       });
     });
   } else if (liveCustody && liveCustody.length > 0) {
@@ -493,7 +519,8 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
           pnl: itemPL,
           pnlPercent: pnlPercent,
           strike: strike,
-          expiration: expiration
+          expiration: expiration,
+          delta: getOptionDelta(item.ticker, type)
         });
       }
     });
@@ -514,7 +541,8 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
         pnl: putPL,
         pnlPercent: (putPL / (entryPrice * qty)) * 100,
         strike: strike,
-        expiration: expiration
+        expiration: expiration,
+        delta: getOptionDelta(putTicker, "PUT")
       });
     }
 
@@ -534,7 +562,8 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
         pnl: callPL,
         pnlPercent: (callPL / (entryPrice * qty)) * 100,
         strike: strike,
-        expiration: expiration
+        expiration: expiration,
+        delta: getOptionDelta(callTicker, "CALL")
       });
     }
   }
@@ -642,45 +671,59 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   // 2. Opções da Custódia
   positionItems.push(...optionsInCustody);
 
-  // Encontra os strikes ativos na custódia
+  // Encontra os strikes ativos na custódia usando as gregas do detalhamento
   const activePut = optionsInCustody.find((o: any) => o.type.includes("PUT") && o.qty > 0);
   const activeCall = optionsInCustody.find((o: any) => o.type.includes("CALL") && o.qty > 0);
-  
-  const activePutStrike = activePut ? (activePut.ticker === "BBDCS167" ? 16.89 : activePut.ticker === "BBDCS2" ? 17.39 : (state.active_put_strike || 17.39)) : null;
-  const activeCallStrike = activeCall ? (activeCall.ticker === "BBDCG194" ? 19.14 : (state.active_call_strike || 19.14)) : null;
+
+  const activePutStrike = activePut ? (activePut.strike || state.active_put_strike || 17.39) : null;
+  const activeCallStrike = activeCall ? (activeCall.strike || state.active_call_strike || 19.14) : null;
 
   const calculateDynamicScenario = (price: number) => {
     const stockPL = (price - entryPrice) * qty;
-    let optionsPL = 0;
+    let putPL = 0;
+    let callPL = 0;
 
     optionsInCustody.forEach((opt: any) => {
       const type = opt.type.includes("PUT") ? "PUT" : "CALL";
       const isClosed = opt.qty === 0;
-      const strike = opt.ticker === state.active_put_ticker ? (state.active_put_strike || 17.39)
+      const strike = opt.strike || (opt.ticker === state.active_put_ticker ? (state.active_put_strike || 17.39)
                    : opt.ticker === state.active_call_ticker ? (state.active_call_strike || 19.14)
                    : opt.ticker === "BBDCS2" ? 17.39
                    : opt.ticker === "BBDCG194" ? 19.14
                    : opt.ticker === "BBDCS167" ? 16.89
-                   : parseFloat(opt.ticker.replace(/\D/g, '')) / 100 || entryPrice;
+                   : parseFloat(opt.ticker.replace(/\D/g, '')) / 100 || entryPrice);
 
       if (type === "PUT") {
         if (!isClosed) {
-          optionsPL += (Math.max(0, strike - price) - opt.avgPrice) * opt.qty;
+          // Estimativa dinâmica baseada no delta hoje (se o spot cair, a put ganha valor pelo delta)
+          // Mas nunca vale menos que seu valor intrínseco (strike - price)
+          const estimatedPutPrice = Math.max(
+            Math.max(0, strike - price), 
+            opt.mktPrice + (opt.delta || -0.30) * (price - livePrice)
+          );
+          putPL += (estimatedPutPrice - opt.avgPrice) * opt.qty;
         } else {
-          optionsPL += opt.pnl;
+          putPL += opt.pnl;
         }
       } else {
         if (!isClosed) {
-          optionsPL += (opt.avgPrice - Math.max(0, price - strike)) * opt.qty;
+          // Estimativa dinâmica baseada no delta hoje (se o spot subir, a call ganha valor pelo delta)
+          // Mas nunca vale menos que seu valor intrínseco (price - strike)
+          const estimatedCallPrice = Math.max(
+            Math.max(0, price - strike), 
+            opt.mktPrice + (opt.delta || 0.25) * (price - livePrice)
+          );
+          // Ganho da venda de call = prêmio recebido - preço estimado atual
+          callPL += (opt.avgPrice - estimatedCallPrice) * opt.qty;
         } else {
-          optionsPL += opt.pnl;
+          callPL += opt.pnl;
         }
       }
     });
 
-    const totalPL = stockPL + optionsPL;
+    const totalPL = stockPL + putPL + callPL;
     const netReturnPercent = (totalPL / (entryPrice * qty)) * 100;
-    return { totalPL, netReturnPercent };
+    return { stockPL, putPL, callPL, totalPL, netReturnPercent };
   };
 
   // ────────────────────────────────────────────────
@@ -1015,6 +1058,16 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
               LONG/SHORT WIN
             </button>
             <button
+              onClick={() => setActiveTab("stock-picking")}
+              className={`text-xs font-bold uppercase tracking-wider h-full border-b-2 px-1 transition-all cursor-pointer ${
+                activeTab === "stock-picking"
+                  ? "border-zinc-900 text-zinc-950"
+                  : "border-transparent text-zinc-400 hover:text-zinc-600"
+              }`}
+            >
+              STOCK PICKING LONG BIAS
+            </button>
+            <button
               onClick={() => setActiveTab("metodologia")}
               className={`text-xs font-bold uppercase tracking-wider h-full border-b-2 px-1 transition-all cursor-pointer ${
                 activeTab === "metodologia"
@@ -1032,6 +1085,24 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
         <div className="animate-in fade-in duration-300">
           <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <Metodologia />
+          </main>
+        </div>
+      ) : activeTab === "stock-picking" ? (
+        <div className="animate-in fade-in duration-300">
+          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-zinc-200">
+              <div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-zinc-100 text-zinc-650 border border-zinc-200">
+                    Systematic Trend Following
+                  </span>
+                </div>
+                <h1 className="text-3xl font-extrabold tracking-tight text-zinc-900">
+                  Trend Following: <span className="text-zinc-950 font-mono">STOCK PICKING LONG BIAS</span>
+                </h1>
+              </div>
+            </header>
+            <StockPickingLongBias />
           </main>
         </div>
       ) : activeTab === "win" ? (
@@ -1156,10 +1227,19 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                   </span>
                 </div>
               </div>
-              <div className="text-[10px] text-zinc-500 mt-4 border-t border-zinc-150 pt-3 flex justify-between font-mono">
-                <span>Put Cost: R$ {putCost.toFixed(2)}</span>
-                <span>Call Income: R$ {callIncome.toFixed(2)}</span>
-                <span>Custo Líquido: R$ {netCost.toFixed(2)}</span>
+              <div className="text-[10px] text-zinc-500 mt-4 border-t border-zinc-150 pt-3 flex flex-col gap-1 font-mono">
+                <div className="flex justify-between">
+                  <span>Put Cost (Total):</span>
+                  <span>R$ {(putCost * putQty).toLocaleString("pt-BR", {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span className="text-[9px] text-zinc-405">(R$ {putCost.toFixed(3)} x {putQty})</span></span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Call Income (Total):</span>
+                  <span>R$ {(callIncome * callQty).toLocaleString("pt-BR", {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span className="text-[9px] text-zinc-405">(R$ {callIncome.toFixed(3)} x {callQty})</span></span>
+                </div>
+                <div className="flex justify-between border-t border-zinc-100 pt-1 font-bold">
+                  <span>Custo Líquido Real:</span>
+                  <span>R$ {((putCost * putQty) - (callIncome * callQty)).toLocaleString("pt-BR", {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                </div>
               </div>
             </div>
 
@@ -1173,15 +1253,43 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
                 <h3 className="text-xs font-bold uppercase tracking-wider text-rose-500 flex items-center gap-2 mb-3 font-mono">
                   <TrendingDown className="h-4 w-4 text-rose-500" /> PIOR CENÁRIO (PROTEÇÃO DE BAIXA)
                 </h3>
-                {activePutStrike ? (
-                  <>
-                    <span className="text-zinc-500 text-xs font-medium">Preço Limitado pela Put ativa em R$ {activePutStrike.toFixed(2)}</span>
-                    <div className="text-2xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono text-rose-600">
-                      R$ {calculateDynamicScenario(activePutStrike).totalPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}
-                      <span className="text-xs font-bold">({calculateDynamicScenario(activePutStrike).netReturnPercent.toFixed(2)}%)</span>
-                    </div>
-                  </>
-                ) : (
+                {activePutStrike ? (() => {
+                  const sc = calculateDynamicScenario(activePutStrike);
+                  const isFullyProtected = putQty >= qty;
+                  return (
+                    <>
+                      <span className="text-zinc-500 text-xs font-medium block">
+                        Preço Limitado pela Put ativa em R$ {activePutStrike.toFixed(2)}
+                      </span>
+                      <div className="text-2xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono text-rose-600">
+                        R$ {sc.totalPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}
+                        <span className="text-xs font-bold">({sc.netReturnPercent.toFixed(2)}%)</span>
+                      </div>
+                      
+                      {/* Breakdown Detalhado */}
+                      <div className="mt-3 pt-3 border-t border-zinc-100 text-[10px] font-mono text-zinc-500 space-y-1">
+                        <div className="flex justify-between">
+                          <span>Ações BBDC4 ({qty}x):</span>
+                          <span className="font-bold text-rose-600">R$ {sc.stockPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Hedge Put {activePut ? activePut.ticker : "Ativa"} ({putQty}x):</span>
+                          <span className={`font-bold ${sc.putPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                            R$ {sc.putPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}
+                          </span>
+                        </div>
+                        {callQty > 0 && (
+                          <div className="flex justify-between">
+                            <span>Financ. Call {activeCall ? activeCall.ticker : "Ativa"} ({callQty}x):</span>
+                            <span className="font-bold text-emerald-600">
+                              +R$ {sc.callPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  );
+                })() : (
                   <>
                     <span className="text-zinc-500 text-xs font-medium">Hedge Inativo (Sem Put de proteção ativa)</span>
                     <div className="text-2xl font-black tracking-tight mt-1 font-mono text-rose-600">
@@ -1199,17 +1307,45 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs flex flex-col justify-between">
               <div>
                 <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-600 flex items-center gap-2 mb-3 font-mono">
-                  <TrendingUp className="h-4 w-4 text-emerald-600" /> MELHOR CENÁRIO (RETORNO MÁXIMO CAPPED)
+                  <TrendingUp className="h-4 w-4 text-emerald-600" /> MELHOR CENÁRIO (RETORNO MÁXIMO)
                 </h3>
-                {activeCallStrike ? (
-                  <>
-                    <span className="text-zinc-500 text-xs font-medium">Lucro Limitado pela Call vendida em R$ {activeCallStrike.toFixed(2)}</span>
-                    <div className="text-2xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono text-emerald-600">
-                      +R$ {calculateDynamicScenario(activeCallStrike).totalPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}
-                      <span className="text-xs font-bold">(+{calculateDynamicScenario(activeCallStrike).netReturnPercent.toFixed(2)}%)</span>
-                    </div>
-                  </>
-                ) : (
+                {activeCallStrike ? (() => {
+                  const sc = calculateDynamicScenario(activeCallStrike);
+                  const isFullyCapped = callQty >= qty;
+                  return (
+                    <>
+                      <span className="text-zinc-500 text-xs font-medium block">
+                        {isFullyCapped 
+                          ? `Lucro Limitado pela Call vendida em R$ ${activeCallStrike.toFixed(2)}` 
+                          : `Lucro Limite em R$ ${activeCallStrike.toFixed(2)} (Alta Ilimitada p/ ${(qty - callQty)} ações)`}
+                      </span>
+                      <div className="text-2xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono text-emerald-600">
+                        {sc.totalPL >= 0 ? "+" : ""}R$ {sc.totalPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}
+                        <span className="text-xs font-bold">({sc.netReturnPercent >= 0 ? "+" : ""}{sc.netReturnPercent.toFixed(2)}%)</span>
+                      </div>
+
+                      {/* Breakdown Detalhado */}
+                      <div className="mt-3 pt-3 border-t border-zinc-100 text-[10px] font-mono text-zinc-500 space-y-1">
+                        <div className="flex justify-between">
+                          <span>Ações BBDC4 ({qty}x):</span>
+                          <span className="font-bold text-emerald-600">+R$ {sc.stockPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Hedge Put {activePut ? activePut.ticker : "Ativa"} ({putQty}x):</span>
+                          <span className="font-bold text-rose-600">
+                            R$ {sc.putPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Financ. Call {activeCall ? activeCall.ticker : "Ativa"} ({callQty}x):</span>
+                          <span className={`font-bold ${sc.callPL >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                            R$ {sc.callPL.toLocaleString("pt-BR", {maximumFractionDigits: 2})}
+                          </span>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })() : (
                   <>
                     <span className="text-zinc-500 text-xs font-medium">Hedge de Alta Inativo (Sem Call vendida ativa)</span>
                     <div className="text-2xl font-black tracking-tight mt-1 font-mono text-emerald-600">
