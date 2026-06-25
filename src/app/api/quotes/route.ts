@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getHedgeState, saveHedgeState } from "@/lib/db";
 import { fetchActiveOptionsQuotes, getClearAccessToken, fetchClearQuote, getActiveWinTicker, fetchClearCustody, fetchClearOrders } from "@/lib/options";
+import { getWinIntradayState, getWinIntradayFallback } from "@/lib/quant_win";
 
 export const dynamic = "force-dynamic";
 
@@ -180,12 +181,22 @@ export async function GET() {
       }
     }
 
+    let winIntradayState = getWinIntradayState();
+    if (!winIntradayState) {
+      try {
+        winIntradayState = await getWinIntradayFallback(winLivePrice);
+      } catch (fallbackError) {
+        console.error("Erro ao obter fallback do yfinance:", fallbackError);
+      }
+    }
+
     return NextResponse.json({
       activeQuotes,
       winLivePrice,
       winTicker,
       clearCustody,
-      state
+      state,
+      winIntradayState
     });
   } catch (error: any) {
     console.error("Erro na API /api/quotes:", error);

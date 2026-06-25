@@ -158,6 +158,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
   const [isFetchingQuotes, setIsFetchingQuotes] = useState(false);
   const [liveCustody, setLiveCustody] = useState<any[] | null>(initialCustody || null);
   const [liveWinTicker, setLiveWinTicker] = useState(initialWinTicker || "WINQ26");
+  const [liveWinIntradayState, setLiveWinIntradayState] = useState<any>(null);
 
   const state = liveState || {
     hedge_active: true,
@@ -205,6 +206,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             if (data.winTicker) setLiveWinTicker(data.winTicker);
             if (data.clearCustody) setLiveCustody(data.clearCustody);
             if (data.state) setLiveState(data.state);
+            if (data.winIntradayState) setLiveWinIntradayState(data.winIntradayState);
           }
         } catch (error) {
           console.error("Erro ao buscar cotações iniciais:", error);
@@ -234,6 +236,9 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
             }
             if (data.state) {
               setLiveState(data.state);
+            }
+            if (data.winIntradayState) {
+              setLiveWinIntradayState(data.winIntradayState);
             }
           }
         } catch (error) {
@@ -1143,6 +1148,7 @@ export default function Dashboard({ initialState, initialHistory, activeQuotes, 
               livePriceFromClear={liveWinPrice}
               winTicker={liveWinTicker}
               liveCustody={liveCustody}
+              winIntradayState={liveWinIntradayState}
             />
           </main>
         </div>

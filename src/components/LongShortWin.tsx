@@ -12,6 +12,15 @@ import {
   ArrowRightLeft,
   Target
 } from "lucide-react";
+import { 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer 
+} from "recharts";
 
 interface LongShortWinProps {
   initialState: {
@@ -29,10 +38,12 @@ interface LongShortWinProps {
   livePriceFromClear?: number | null;
   winTicker?: string;
   liveCustody?: any[] | null;
+  winIntradayState?: any | null;
 }
 
-export default function LongShortWin({ initialState, livePriceFromClear, winTicker = "WINQ26", liveCustody }: LongShortWinProps) {
+export default function LongShortWin({ initialState, livePriceFromClear, winTicker = "WINQ26", liveCustody, winIntradayState }: LongShortWinProps) {
   const [isMounted, setIsMounted] = useState(false);
+  const [intradayTab, setIntradayTab] = useState<"daily" | "intraday">("daily");
   
   // Parâmetros de risco
   const [capitalBase, setCapitalBase] = useState(100000);
@@ -275,6 +286,34 @@ export default function LongShortWin({ initialState, livePriceFromClear, winTick
 
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
+      
+      {/* Selector de Horizonte Temporal */}
+      <div className="flex space-x-2 bg-zinc-100 p-1.5 rounded-lg w-max border border-zinc-200">
+        <button
+          onClick={() => setIntradayTab("daily")}
+          className={`px-4 py-1.5 rounded text-xs font-bold transition-all cursor-pointer ${
+            intradayTab === "daily"
+              ? "bg-white text-zinc-950 shadow-xs border border-zinc-200"
+              : "text-zinc-500 hover:text-zinc-800"
+          }`}
+        >
+          Daily (Swing Trade)
+        </button>
+        <button
+          onClick={() => setIntradayTab("intraday")}
+          className={`px-4 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+            intradayTab === "intraday"
+              ? "bg-white text-zinc-950 shadow-xs border border-zinc-200"
+              : "text-zinc-500 hover:text-zinc-800"
+          }`}
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          Intraday M5 (MetaTrader 5)
+        </button>
+      </div>
+
+      {intradayTab === "daily" ? (
+        <>
       
       {/* Três Cards Principais */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -559,7 +598,212 @@ export default function LongShortWin({ initialState, livePriceFromClear, winTick
           </table>
         </div>
       </section>
+      </>
+      ) : (
+        <div className="space-y-8 animate-in fade-in duration-300">
+          {!winIntradayState ? (
+            <div className="bg-white border border-zinc-200 rounded-lg p-12 text-center shadow-xs">
+              <div className="inline-flex items-center justify-center p-3 rounded-full bg-amber-50 text-amber-600 mb-4 animate-bounce">
+                <Sliders className="h-6 w-6" />
+              </div>
+              <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-850 font-mono mb-2">Aguardando Conexão MetaTrader 5</h3>
+              <p className="text-xs text-zinc-500 max-w-md mx-auto leading-relaxed">
+                Por favor, execute o script de monitoramento no seu terminal local para atualizar as cotações:
+                <code className="block bg-zinc-50 border border-zinc-200 p-2.5 rounded font-mono text-[10px] text-rose-600 mt-2">
+                  python win_intraday_monitor.py
+                </code>
+                Isso iniciará o processamento em tempo real dos candles de 5 minutos do contrato ativo do WINQ26.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Três Cards Intraday */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                
+                {/* Card 1: Estado da Posição */}
+                <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs flex flex-col justify-between animate-in fade-in duration-300">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-3 font-mono">
+                      <Target className="h-4 w-4 text-zinc-500" /> SINAL DO MODELO (M5)
+                    </h3>
+                    <span className="text-zinc-500 text-xs font-medium">Recomendação Operacional</span>
+                    <div className={`text-3xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono ${
+                      winIntradayState.signal_state.includes("SHORT") ? "text-rose-650" : "text-zinc-500"
+                    }`}>
+                      {winIntradayState.signal_state}
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-zinc-500 mt-4 border-t border-zinc-150 pt-3 flex flex-col gap-1.5 font-mono">
+                    {winIntradayState.active_position ? (
+                      <>
+                        <div className="flex justify-between">
+                          <span>Preço Entrada:</span>
+                          <span className="font-bold text-zinc-900">{winIntradayState.active_position.entry_price.toLocaleString("pt-BR")} pts</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Stop Loss:</span>
+                          <span className="font-bold text-rose-600">{winIntradayState.active_position.stop_loss.toLocaleString("pt-BR")} pts</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Parcial (TP1):</span>
+                          <span className={`font-bold ${winIntradayState.active_position.has_taken_partial ? "text-emerald-600 line-through" : "text-zinc-700"}`}>
+                            {winIntradayState.active_position.tp1.toLocaleString("pt-BR")} pts
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Alvo Final (TP2):</span>
+                          <span className="font-bold text-emerald-600">{winIntradayState.active_position.tp2.toLocaleString("pt-BR")} pts</span>
+                        </div>
+                      </>
+                    ) : (
+                      <span>Aguardando exaustão em topo duplo para acionar SHORT.</span>
+                    )}
+                  </div>
+                </div>
 
+                {/* Card 2: Indicadores Real-Time */}
+                <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs flex flex-col justify-between animate-in fade-in duration-300">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-3 font-mono">
+                      <Activity className="h-4 w-4 text-zinc-500" /> COTAÇÃO & INDICADORES
+                    </h3>
+                    <span className="text-zinc-500 text-xs font-medium">Preço de tela do WINQ26</span>
+                    <div className="text-3xl font-black tracking-tight mt-1 flex items-baseline gap-2 font-mono text-zinc-950">
+                      {winIntradayState.last_price.toLocaleString("pt-BR")} pts
+                      <span className="text-xs font-bold text-zinc-400 font-sans">({winIntradayState.last_time})</span>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-zinc-500 mt-4 border-t border-zinc-150 pt-3 flex flex-col gap-1.5 font-mono">
+                    <div className="flex justify-between">
+                      <span>VWAP do dia:</span>
+                      <span className="font-bold text-zinc-800">{winIntradayState.vwap.toLocaleString("pt-BR")} pts</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Z-Score VWAP:</span>
+                      <span className={`font-bold ${
+                        Math.abs(winIntradayState.zscore) >= 2.0 ? "text-rose-500 animate-pulse font-extrabold" : "text-zinc-800"
+                      }`}>{winIntradayState.zscore.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>RSI (2):</span>
+                      <span className="font-bold text-zinc-800">{winIntradayState.rsi2.toFixed(1)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Kalman Price:</span>
+                      <span className="font-bold text-zinc-800">{winIntradayState.kalman.toLocaleString("pt-BR")} pts</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 3: Topos Duplos */}
+                <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs flex flex-col justify-between animate-in fade-in duration-300">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2 mb-3 font-mono">
+                      <TrendingUp className="h-4 w-4 text-zinc-500" /> RESISTÊNCIAS RECENTES (PEAKS)
+                    </h3>
+                    <span className="text-zinc-500 text-xs font-medium">Exaustão no dia</span>
+                    <div className="mt-3 space-y-2">
+                      {winIntradayState.recent_peaks && winIntradayState.recent_peaks.length > 0 ? (
+                        winIntradayState.recent_peaks.map((p: any, idx: number) => (
+                          <div key={idx} className="flex justify-between text-xs font-mono border-b border-zinc-100 pb-1.5 last:border-b-0 last:pb-0">
+                            <span className="text-zinc-400">Pico às {p.time}:</span>
+                            <span className="font-bold text-zinc-800">{p.price.toLocaleString("pt-BR")} pts</span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-xs text-zinc-400 font-mono py-1">Nenhuma resistência detectada ainda hoje.</div>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-zinc-400 mt-4 border-t border-zinc-150 pt-3">
+                    As resistências são calculadas buscando máximas locais no M5 coincidentes com desvio alto da VWAP.
+                  </p>
+                </div>
+              </div>
+
+              {/* Painel de Projeção Intraday (Hedge Fund Mindset) */}
+              {winIntradayState.projection && (
+                <div className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs border-l-4 border-l-zinc-950 animate-in fade-in duration-300">
+                  <div className="mb-4 pb-2 border-b border-zinc-150 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Projeção Estatística de Preço (Intraday Forecast)</h2>
+                      <p className="text-xs text-zinc-400">Modelagem quantitativa baseada em desvios de VWAP e momentum do Filtro de Kalman</p>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-zinc-100 text-zinc-650 border border-zinc-200">
+                      FORECAST MODEL
+                    </span>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div className="bg-zinc-50 p-4 rounded border border-zinc-150">
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider font-mono block">Direção Esperada</span>
+                      <span className={`text-sm font-extrabold font-mono block mt-1 ${
+                        winIntradayState.projection.expected_direction.includes("QUEDA") 
+                          ? "text-rose-600" 
+                          : winIntradayState.projection.expected_direction.includes("ALTA") 
+                            ? "text-emerald-600" 
+                            : "text-zinc-600"
+                      }`}>
+                        {winIntradayState.projection.expected_direction}
+                      </span>
+                    </div>
+
+                    <div className="bg-zinc-50 p-4 rounded border border-zinc-150">
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider font-mono block">Alvo Projetado</span>
+                      <span className="text-sm font-extrabold font-mono text-zinc-900 block mt-1">
+                        {winIntradayState.projection.projected_target.toLocaleString("pt-BR", {maximumFractionDigits: 0})} pts
+                      </span>
+                    </div>
+
+                    <div className="bg-zinc-50 p-4 rounded border border-zinc-150">
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider font-mono block">Canal de Volatilidade (M5)</span>
+                      <span className="text-[10px] font-mono text-zinc-600 block mt-1 leading-normal">
+                        Teto (+2 SD): <b className="text-rose-500 font-bold">{winIntradayState.projection.projected_ceiling.toLocaleString("pt-BR", {maximumFractionDigits: 0})} pts</b>
+                        <br />
+                        Piso (-2 SD): <b className="text-emerald-500 font-bold">{winIntradayState.projection.projected_floor.toLocaleString("pt-BR", {maximumFractionDigits: 0})} pts</b>
+                      </span>
+                    </div>
+
+                    <div className="bg-zinc-50 p-4 rounded border border-zinc-150">
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider font-mono block">Confiança / Volatilidade</span>
+                      <span className="text-sm font-extrabold font-mono text-zinc-900 block mt-1">
+                        {winIntradayState.projection.probability}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <p className="text-[11px] text-zinc-500 font-mono mt-4 leading-relaxed bg-zinc-50/50 p-3 rounded border border-zinc-100">
+                    💡 <b>Análise de Cenário:</b> {winIntradayState.projection.description}
+                  </p>
+                </div>
+              )}
+
+              {/* Gráfico Intraday Recharts */}
+              <section className="bg-white border border-zinc-200 rounded-lg p-6 shadow-xs">
+                <div className="mb-6 pb-3 border-b border-zinc-150">
+                  <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider font-mono">Gráfico Real-Time WINQ26 (5 Minutos)</h2>
+                  <p className="text-xs text-zinc-400">Preços, VWAP Bands e Kalman Filter diretamente do MetaTrader 5</p>
+                </div>
+                <div className="h-96 w-full font-mono text-xs">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={winIntradayState.chart_data} margin={{ top: 10, right: 30, left: 20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" />
+                      <XAxis dataKey="time" stroke="#a1a1aa" fontSize={10} />
+                      <YAxis domain={['auto', 'auto']} stroke="#a1a1aa" fontSize={10} tickFormatter={(v) => v.toLocaleString("pt-BR")} />
+                      <Tooltip formatter={(value: any) => value.toLocaleString("pt-BR")} labelStyle={{ fontWeight: "bold" }} />
+                      <Line type="monotone" dataKey="close" stroke="#09090b" strokeWidth={2.5} dot={false} name="Preço Close" />
+                      <Line type="monotone" dataKey="vwap" stroke="#f97316" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="VWAP" />
+                      <Line type="monotone" dataKey="upper_2" stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" dot={false} name="VWAP +2.0 SD (Res.)" />
+                      <Line type="monotone" dataKey="lower_2" stroke="#10b981" strokeWidth={1} strokeDasharray="3 3" dot={false} name="VWAP -2.0 SD (Suporte)" />
+                      <Line type="monotone" dataKey="kalman" stroke="#8b5cf6" strokeWidth={1.5} dot={false} name="Filtro de Kalman" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

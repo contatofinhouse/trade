@@ -27,3 +27,6 @@ venv/
 
 # Local databases/state
 hedge_state.json
+win_intraday_state.json
+tsconfig.tsbuildinfo
+scratch/
