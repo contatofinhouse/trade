@@ -21,6 +21,7 @@ import {
 interface ScanResult {
   ticker: string;
   preco_atual: number;
+  preco_sinal: number;
   z_price: number;
   vol_ratio: number;
   z_volume: number;
